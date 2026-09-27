@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Circuit Doctor</string>
+    <string name="app_subtitle">ยินดีต้อนรับเข้าสู่วิศวกรรมอัจอริยะ</string>
+
+    <string name="tag_ai_diagnostic">AI Diagnostic</string>
+    <string name="diagnostic_title">วงจรไม่ทำงาน?</string>
+    <string name="diagnostic_desc">ให้เราช่วยวิเคราะห์และหา สาเหตุให้คุณทีละขั้นตอน</string>
+    <string name="btn_start_diagnostic">เริ่มวิเคราะห์ปัญหา</string>
+
+    <string name="feature_write_circuit_title">เรียนรู้วงจร</string>
+    <string name="feature_write_circuit_desc">ทฤษฎี Ohm, Kirchhoff, Node</string>
+
+    <string name="feature_quiz_title">แบบทดสอบ</string>
+    <string name="feature_quiz_desc">ทดสอบความเข้าใจเรื่องไฟฟ้า</string>
+
+    <string name="menu_history_title">ประวัติการต่อวงจร</string>
+    <string name="menu_history_desc">ดูรายการตรวจวงจรที่คุณเคยวิเคราะห์</string>
+
+    <string name="menu_chat_title">AI Assistant Chat</string>
+    <string name="menu_chat_desc">ปรึกษาปัญหาเกี่ยวกับ AI</string>
+
+    <string name="menu_breadboard_title">จำลองวงจร Breadboard</string>
+    <string name="menu_breadboard_desc">ทดสอบต่อวงจรจำลอง</string>
+
+    <string name="nav_home">หน้าหลัก</string>
+    <string name="nav_write">เรียนรู็วงจร</string>
+    <string name="nav_learn">คลังความรู้</string>
+    <string name="nav_profile">โปรไฟล์</string>
+    <string name="splash_loading">กำลังโหลด...</string>
+    <string name="symptom_screen_title">เลือกอาการวงจร</string>
+    <string name="symptom_search_hint">ค้นหาอาการ เช่น LED ไม่ติด...</string>
+
+    <string name="symptom_led_title">LED ไม่ติด</string>
+    <string name="symptom_led_desc">ไฟไม่ติดหรือไม่สว่าง</string>
+
+    <string name="symptom_motor_title">มอเตอร์ไม่ทำงาน</string>
+    <string name="symptom_motor_desc">ไม่หมุนหรือไม่ทำงาน</string>
+
+    <string name="symptom_no_power_title">วงจรไม่จ่ายไฟ</string>
+    <string name="symptom_no_power_desc">ไม่มีไฟเข้าวงจร</string>
+
+    <string name="symptom_voltage_title">แรงดันตกผิดปกติ</string>
+    <string name="symptom_voltage_desc">แรงดันไฟฟ้าตกผิดปกติ</string>
+
+    <string name="symptom_signal_title">สัญญาณไม่ออก</string>
+    <string name="symptom_signal_desc">ไม่มีสัญญาณขาออก</string>
+    <string name="login_subtitle">เข้าสู่ระบบเพื่อใช้งานระบบวงจรไฟฟ้าอัจฉริยะ</string>
+    <string name="login_label_email">อีเมล / Email</string>
+    <string name="login_hint_email">example@email.com</string>
+    <string name="login_label_password">รหัสผ่าน / Password</string>
+    <string name="login_hint_password">••••••••</string>
+    <string name="login_button">เข้าสู่ระบบ</string>
+    <string name="login_register_link">สมัครสมาชิกใหม่</string>
+    <string name="login_guest_link">ใช้งานแบบไม่ลงทะเบียน (Guest)</string>
+    <string name="login_error_empty">กรุณากรอกข้อมูลให้ครบ</string>
+    <string name="login_error_no_account">ยังไม่มีบัญชี กรุณาสมัครสมาชิกก่อน</string>
+    <string name="login_error_invalid">อีเมลหรือรหัสผ่านไม่ถูกต้อง</string>
+
+    <string name="register_title">สมัครสมาชิก</string>
+    <string name="register_label_confirm">ยืนยันรหัสผ่าน</string>
+    <string name="register_hint_confirm">••••••••</string>
+    <string name="register_button">สมัครสมาชิก</string>
+    <string name="register_error_mismatch">รหัสผ่านไม่ตรงกัน</string>
+    <string name="profile_screen_title">โปรไฟล์</string>
+    <string name="profile_member_label">สมาชิก</string>
+    <string name="profile_guest_label">ผู้เยี่ยมชม (Guest)</string>
+    <string name="profile_guest_desc">ยังไม่ได้ลงทะเบียนบัญชี</string>
+    <string name="profile_history_link">ประวัติการใช้งาน</string>
+    <string name="profile_logout_button">ออกจากระบบ</string>
+    <string name="quiz_subtitle">ตอบคำถามเพื่อวิเคราะห์ปัญหา</string>
+    <string name="quiz_progress_label">ข้อ %1$d จาก %2$d</string>
+    <string name="quiz_button_previous">ย้อนกลับ</string>
+    <string name="quiz_button_next">ถัดไป</string>
+    <string name="quiz_button_finish">ดูผลลัพธ์</string>
+
+    <string name="result_screen_title">ผลการวินิจฉัย</string>
+    <string name="result_recommendation_title">คำแนะนำการแก้ไข</string>
+    <string name="result_button_home">กลับหน้าหลัก</string>
+    <string name="lesson_list_title">เรียนรู้วงจร</string>
+    <string name="lesson_list_subtitle">บทเรียนพื้นฐานถึงระดับกลางเกี่ยวกับวงจรไฟฟ้า</string>
+
+    <string name="lesson_level_beginner">เริ่มต้น</string>
+    <string name="lesson_level_intermediate">ระดับกลาง</string>
+
+    <string name="lesson_basic_title">พื้นฐานไฟฟ้า</string>
+    <string name="lesson_basic_desc">แรงดัน กระแส และกำลังไฟฟ้าคืออะไร</string>
+    <string name="lesson_basic_content">ไฟฟ้าประกอบด้วย 3 ปริมาณหลักที่ต้องเข้าใจก่อนเริ่มต่อวงจรจริง:\n\n• แรงดันไฟฟ้า (Voltage, V) หน่วยเป็นโวลต์ คือแรงผลักดันให้อิเล็กตรอนไหล\n• กระแสไฟฟ้า (Current, I) หน่วยเป็นแอมแปร์ คือปริมาณอิเล็กตรอนที่ไหลผ่านต่อวินาที\n• กำลังไฟฟ้า (Power, P) หน่วยเป็นวัตต์ คำนวณจาก P = V × I\n\nการเข้าใจ 3 ค่านี้จะช่วยให้อ่านสเปกอุปกรณ์และออกแบบวงจรได้ถูกต้องปลอดภัย</string>
+
+    <string name="lesson_ohm_title">กฎของโอห์ม (Ohm\'s Law)</string>
+    <string name="lesson_ohm_desc">ความสัมพันธ์ระหว่าง V, I และ R</string>
+    <string name="lesson_ohm_content">กฎของโอห์มคือสูตรพื้นฐานที่สุดของวงจรไฟฟ้า:\n\nV = I × R\n\nโดยที่ V คือแรงดัน (โวลต์), I คือกระแส (แอมแปร์), R คือความต้านทาน (โอห์ม)\n\nจากสูตรนี้สามารถจัดรูปหาค่าที่ต้องการได้ เช่น I = V ÷ R หรือ R = V ÷ I ใช้คำนวณหาค่าตัวต้านทานที่เหมาะสมสำหรับจำกัดกระแสให้ LED หรืออุปกรณ์อื่นๆ ไม่ให้เสียหาย</string>
+
+    <string name="lesson_series_title">วงจรอนุกรม (Series Circuit)</string>
+    <string name="lesson_series_desc">การต่ออุปกรณ์เรียงต่อกันเป็นเส้นเดียว</string>
+    <string name="lesson_series_content">วงจรอนุกรมคือการต่ออุปกรณ์เรียงต่อกันเป็นเส้นทางเดียว กระแสไฟฟ้าไหลผ่านทุกอุปกรณ์เท่ากันหมด\n\nคุณสมบัติสำคัญ:\n• กระแสไฟ (I) เท่ากันทุกจุดในวงจร\n• แรงดันไฟ (V) จะถูกแบ่งตามค่าความต้านทานของแต่ละตัว\n• ความต้านทานรวม R_total = R1 + R2 + R3 ...\n\nข้อเสียคือถ้าอุปกรณ์ตัวใดตัวหนึ่งขาด วงจรทั้งหมดจะหยุดทำงานทันที</string>
+
+    <string name="lesson_parallel_title">วงจรขนาน (Parallel Circuit)</string>
+    <string name="lesson_parallel_desc">การต่ออุปกรณ์คร่อมกันหลายเส้นทาง</string>
+    <string name="lesson_parallel_content">วงจรขนานคือการต่ออุปกรณ์หลายตัวคร่อมกันระหว่างจุดสองจุดเดียวกัน ทำให้มีหลายเส้นทางให้กระแสไหล\n\nคุณสมบัติสำคัญ:\n• แรงดันไฟ (V) เท่ากันทุกสาขา\n• กระแสไฟ (I) จะถูกแบ่งไปตามแต่ละสาขาตามค่าความต้านทาน\n• ความต้านทานรวม 1/R_total = 1/R1 + 1/R2 + 1/R3 ...\n\nข้อดีคือถ้าอุปกรณ์ตัวใดตัวหนึ่งขาด อุปกรณ์ตัวอื่นยังทำงานได้ตามปกติ</string>
+
+    <string name="lesson_kirchhoff_title">กฎของ Kirchhoff (KCL / KVL)</string>
+    <string name="lesson_kirchhoff_desc">กฎกระแสและแรงดันสำหรับวงจรซับซ้อน</string>
+    <string name="lesson_kirchhoff_content">กฎของ Kirchhoff ใช้วิเคราะห์วงจรที่ซับซ้อนกว่าวงจรอนุกรม-ขนานธรรมดา แบ่งเป็น 2 กฎ:\n\n1) KCL (Kirchhoff\'s Current Law): ผลรวมกระแสไฟฟ้าที่ไหลเข้าโหนดหนึ่ง จะเท่ากับผลรวมกระแสที่ไหลออกจากโหนดนั้นเสมอ\n\n2) KVL (Kirchhoff\'s Voltage Law): ผลรวมแรงดันไฟฟ้ารอบลูป (Loop) ปิดใดๆ จะเท่ากับศูนย์เสมอ\n\nสองกฎนี้เป็นพื้นฐานสำคัญของการวิเคราะห์วงจรแบบ Node Analysis และ Mesh Analysis</string>
+
+    <string name="lesson_resistor_title">การอ่านค่าตัวต้านทาน</string>
+    <string name="lesson_resistor_desc">อ่านแถบสีตัวต้านทานให้เป็น</string>
+    <string name="lesson_resistor_content">ตัวต้านทานส่วนใหญ่มีแถบสี 4 แถบระบุค่าความต้านทาน:\n\n• แถบที่ 1-2: ตัวเลขหลักที่ 1 และ 2\n• แถบที่ 3: ตัวคูณ (จำนวนศูนย์ที่ต้องเติม)\n• แถบที่ 4: ค่าความคลาดเคลื่อน (Tolerance) เช่น ทอง = ±5%\n\nตัวอย่าง: น้ำตาล-ดำ-แดง-ทอง อ่านได้เป็น 1-0-00 = 1,000 โอห์ม (1kΩ) ค่าคลาดเคลื่อน ±5%\n\nควรฝึกจำสีเลขและใช้มัลติมิเตอร์วัดยืนยันค่าทุกครั้งก่อนนำไปต่อวงจรจริง</string>
+
+    <string name="lesson_breadboard_title">เบรดบอร์ดเบื้องต้น</string>
+    <string name="lesson_breadboard_desc">โครงสร้างและวิธีต่อวงจรบนเบรดบอร์ด</string>
+    <string name="lesson_breadboard_content">เบรดบอร์ดเป็นแผ่นทดลองต่อวงจรโดยไม่ต้องบัดกรี แบ่งเป็น 2 ส่วนหลัก:\n\n• แถวกลาง (Terminal strips): รูในแนวตั้งแต่ละแถว 5 รู เชื่อมถึงกันภายใน ใช้เสียบขาอุปกรณ์และสร้างจุดต่อวงจร\n• แถบข้าง (Power rails): เส้นแนวนอนยาวสองแถบ (+ และ -) ใช้กระจายไฟเลี้ยงไปทั่วบอร์ด\n\nข้อควรระวัง: ตรวจสอบขั้ว +/- ให้ถูกต้องก่อนจ่ายไฟทุกครั้ง และไม่ควรเสียบขาอุปกรณ์ข้ามร่องกลางบอร์ดโดยไม่ตั้งใจ เพราะจะทำให้วงจรลัดหรือไม่ทำงานตามที่ออกแบบ</string>
+
+    <string name="circuit_search_hint">ค้นหา...</string>
+    <string name="circuit_button_start_sim">เริ่มจำลอง</string>
+    <string name="circuit_button_stop_sim">หยุดจำลอง</string>
+    <string name="circuit_button_save">บันทึกวงจร</string>
+    <string name="circuit_button_send">Send To</string>
+    <string name="circuit_save_success">บันทึกวงจรเรียบร้อยแล้ว</string>
+    <string name="circuit_send_placeholder">ฟังก์ชันนี้จะเปิดให้ใช้งานเร็วๆนี้</string>
+    <string name="circuit_select_component_first">กรุณาเลือกอุปกรณ์ก่อนลบ</string>
+
+    <string name="circuit_sim_no_battery">⚠️ ยังไม่ได้วางแบตเตอรี่ในวงจร</string>
+    <string name="circuit_sim_incomplete">❌ วงจรยังไม่ครบ ตรวจสอบการเชื่อมต่อจากแบตเตอรี่</string>
+    <string name="circuit_sim_overcurrent">🔥 อันตราย! ไม่มีตัวต้านทานจำกัดกระแส LED อาจไหม้</string>
+    <string name="circuit_sim_led_off_low_voltage">💡 แรงดันไม่พอให้ LED ติด (ใช้ไปกับ Forward Voltage หมด)</string>
+    <string name="circuit_sim_success_detail">✅ LED ติดสว่าง — กระแสไหล %1$s mA ผ่านความต้านทานรวม %2$d Ω</string>
+    <string name="circuit_sim_success">✅ วงจรครบวงจร</string>
+    <string name="circuit_tap_board_to_place">แตะตำแหน่งบนบอร์ดเพื่อวางอุปกรณ์</string>
+
+    <string name="component_resistor">Resistor</string>
+    <string name="component_led">LED</string>
+    <string name="component_pushbutton">Pushbutton</string>
+    <string name="component_battery">9V Battery</string>
+    <string name="component_breadboard">Breadboard</string>
+    <string name="breadboard_screen_title">จำลองวงจร Breadboard</string>
+    <string name="lesson_diode_title">ไดโอดและ LED</string>
+    <string name="lesson_diode_desc">หลักการทำงานและการต่อวงจร LED อย่างปลอดภัย</string>
+    <string name="lesson_diode_content">ไดโอดเป็นอุปกรณ์ที่ยอมให้กระแสไหลทิศทางเดียว (จากขา Anode ไป Cathode) LED (Light Emitting Diode) คือไดโอดชนิดหนึ่งที่เปล่งแสงเมื่อมีกระแสไหลผ่าน\n\nข้อควรรู้ก่อนต่อวงจร:\n• ต้องต่อขั้วให้ถูกทิศทาง ขาที่ยาวกว่าคือ Anode (+)\n• ต้องมีตัวต้านทานจำกัดกระแสต่ออนุกรมเสมอ ไม่เช่นนั้น LED จะไหม้\n• คำนวณค่าตัวต้านทานจาก R = (Vsource − Vf) ÷ I โดย Vf คือแรงดันตกคร่อม LED (ทั่วไปราว 2V) และ I คือกระแสที่ต้องการ (ทั่วไป 10-20mA)</string>
+    <string name="circuit_history_title">ประวัติการต่อวงจร</string>
+    <string name="circuit_history_empty">ยังไม่มีวงจรที่บันทึกไว้</string>
+    <string name="circuit_history_delete">ลบ</string>
+    <string name="circuit_history_deleted">ลบวงจรแล้ว</string>
+    <string name="circuit_save_dialog_title">ตั้งชื่อวงจร</string>
+    <string name="circuit_save_dialog_hint">เช่น วงจร LED ไฟกระพริบ</string>
+    <string name="circuit_save_button_confirm">บันทึก</string>
+    <string name="circuit_save_button_cancel">ยกเลิก</string>
+    <string name="circuit_update_success">อัปเดตวงจรเรียบร้อยแล้ว</string>
+    <string name="circuit_default_name">วงจรที่บันทึกไว้</string>
+    <string name="quiz_screen_title">แบบทดสอบต่อวงจร</string>
+    <string name="quiz_level_easy">ระดับง่าย</string>
+    <string name="quiz_level_medium">ระดับปานกลาง</string>
+    <string name="quiz_level_hard">ระดับยาก</string>
+    <string name="challenge_go_build">ไปต่อวงจร</string>
+    <string name="challenge_check_button">ตรวจคำตอบ</string>
+    <string name="challenge_missing_components">❌ วางอุปกรณ์ยังไม่ครบตามโจทย์</string>
+    <string name="challenge_circuit_not_working">⚠️ ต่อวงจรยังไม่ถูกต้อง หรือวงจรยังไม่ปลอดภัย</string>
+    <string name="challenge_success">✅ ถูกต้อง! ต่อวงจรตามโจทย์สำเร็จ</string>
+    <string name="chat_screen_title">AI Assistant Chat</string>
+    <string name="chat_input_hint">พิมพ์คำถามเกี่ยวกับวงจรไฟฟ้า...</string>
+    <string name="chat_send_button">ส่ง</string>
+    <string name="chat_greeting">สวัสดีครับ! ผมคือผู้ช่วย AI ของ Circuit Doctor ถามอะไรเกี่ยวกับวงจรไฟฟ้าได้เลยครับ</string>
+    <string name="chat_error_prefix">เกิดข้อผิดพลาด:</string>
+    <string name="settings_screen_title">การตั้งค่า</string>
+    <string name="settings_app_version">เวอร์ชัน 1.0</string>
+    <string name="settings_team_title">ทีมผู้พัฒนา</string>
+    <string name="settings_thanks_note">ขอขอบพระคุณอาจารย์ผู้สอนและทุกท่านที่ให้คำแนะนำ ในการพัฒนาแอปพลิเคชันนี้</string>
+    <string name="usage_history_title">ประวัติการใช้งาน</string>
+    <string name="usage_history_empty">ยังไม่มีประวัติการใช้งาน</string>
+    <string name="settings_faculty_name">คณะวิศวกรรมศาสตร์และเทคโนโลยีอุตสาหกรรม</string>
+</resources>

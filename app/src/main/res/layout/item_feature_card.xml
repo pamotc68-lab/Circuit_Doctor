@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_weight="1"
+    android:orientation="vertical"
+    android:background="@drawable/bg_card_dark"
+    android:padding="16dp"
+    android:clickable="true"
+    android:focusable="true">
+
+    <View
+        android:id="@+id/iconBackground"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="@drawable/bg_circle_icon" />
+
+    <ImageView
+        android:id="@+id/imgFeatureIcon"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_marginTop="-27dp"
+        android:layout_marginStart="9dp"
+        android:tint="@color/text_primary" />
+
+    <TextView
+        android:id="@+id/tvFeatureTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:fontFamily="sans-serif-medium"
+        android:textColor="@color/text_primary"
+        android:textSize="@dimen/text_title"
+        tools:text="เขียนวงจร" />
+
+    <TextView
+        android:id="@+id/tvFeatureDesc"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="@dimen/text_subtitle"
+        tools:text="ทฤษฎี Ohm, Kirchhoff, Node" />
+
+</LinearLayout>

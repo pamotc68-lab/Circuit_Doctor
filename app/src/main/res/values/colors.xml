@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_root">#0B0F1A</color>
+    <color name="bg_status_bar">#F5F1EA</color>
+
+    <color name="surface_card">#141A29</color>
+    <color name="surface_card_stroke">#232B40</color>
+    <color name="surface_diagnostic">#161C2E</color>
+
+    <color name="accent_blue">#4C8DFF</color>
+    <color name="accent_blue_dark">#2E63C9</color>
+    <color name="accent_green">#2ECC91</color>
+    <color name="accent_orange">#E8823C</color>
+    <color name="accent_purple">#7C6CE8</color>
+    <color name="accent_teal">#20C0B0</color>
+    <color name="accent_pink">#E0507A</color>
+
+    <color name="button_bg">#E8823C</color>
+    <color name="button_text">#1A1200</color>
+
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#8B93A7</color>
+    <color name="text_tertiary">#5C6478</color>
+
+    <color name="bottom_nav_bg">#0F1420</color>
+    <color name="bottom_nav_selected">#4C8DFF</color>
+    <color name="bottom_nav_unselected">#5C6478</color>
+
+    <color name="divider">#1E2536</color>
+</resources>
