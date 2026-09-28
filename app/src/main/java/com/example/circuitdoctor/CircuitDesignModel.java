@@ -3,10 +3,27 @@ package com.example.circuitdoctor;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.Collections;
 
 public class CircuitDesignModel {
+
+    public static final int DEFAULT_WIRE_COLOR = 0xFF2E7D32;
+
+    public static final int[] LED_COLOR_PALETTE = {
+            0xFFFF1744, // แดง
+            0xFF00E676, // เขียว
+            0xFF2979FF, // ฟ้า
+            0xFFFFEA00, // เหลือง
+            0xFFFF6D00, // ส้ม
+            0xFFFFFFFF  // ขาว
+    };
+
+    private static final double DEFAULT_RESISTOR_OHMS = 220.0;
+    private static final double DEFAULT_BATTERY_VOLTAGE = 9.0;
 
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<Connection> connections = new ArrayList<>();
@@ -19,13 +36,38 @@ public class CircuitDesignModel {
         return id;
     }
 
+    /** วางอุปกรณ์อย่างอิสระนอกเบรดบอร์ด (ไม่ยึดรู) */
+    public long addComponentFree(int typeId, float freeX, float freeY) {
+        long id = nextId++;
+        PlacedComponent p = new PlacedComponent(id, typeId, -1, -1, -1);
+        p.freePlaced = true;
+        p.freeX = freeX;
+        p.freeY = freeY;
+        components.add(p);
+        return id;
+    }
+
     public void moveComponent(long id, int row, int newColA) {
         for (PlacedComponent p : components) {
             if (p.id == id) {
                 int span = p.colB - p.colA;
+                if (span <= 0) span = PlacedComponent.SPAN_COLUMNS;
+                p.freePlaced = false;
                 p.row = row;
                 p.colA = Math.max(0, newColA);
                 p.colB = Math.min(p.colA + span, BreadboardGrid.COLS - 1);
+                return;
+            }
+        }
+    }
+
+    /** ย้ายอุปกรณ์ไปวางอย่างอิสระนอกเบรดบอร์ด */
+    public void moveComponentFree(long id, float freeX, float freeY) {
+        for (PlacedComponent p : components) {
+            if (p.id == id) {
+                p.freePlaced = true;
+                p.freeX = freeX;
+                p.freeY = freeY;
                 return;
             }
         }
@@ -37,22 +79,56 @@ public class CircuitDesignModel {
     }
 
     public void addConnection(TerminalRef a, TerminalRef b) {
+        addConnection(a, b, DEFAULT_WIRE_COLOR);
+    }
+
+    public void addConnection(TerminalRef a, TerminalRef b, int color) {
         if (a.equals(b)) return;
         for (Connection c : connections) {
             if (c.connects(a, b)) return;
         }
-        connections.add(new Connection(a.componentId, a.isA, b.componentId, b.isA));
+        Connection conn = new Connection(a, b);
+        conn.color = color;
+        connections.add(conn);
     }
 
-    /** หาว่ารูที่แตะตรงกับขา A หรือ B ของอุปกรณ์ตัวไหนหรือไม่ */
+    /** หาว่ารูที่แตะตรงกับขา A หรือ B ของอุปกรณ์ตัวไหนหรือไม่ (เฉพาะอุปกรณ์ที่ยึดรูบนบอร์ด) */
     public TerminalRef findTerminalAt(int row, int col) {
         for (int i = components.size() - 1; i >= 0; i--) {
             PlacedComponent p = components.get(i);
-            if (p.row != row) continue;
+            if (p.freePlaced || p.row != row) continue;
             if (p.colA == col) return new TerminalRef(p.id, true);
             if (p.colB == col) return new TerminalRef(p.id, false);
         }
         return null;
+    }
+
+    /** เปลี่ยนสี LED ไปสีถัดไปในชุดสี (วนกลับเมื่อครบ) */
+    public void cycleLedColor(long id) {
+        PlacedComponent p = findComponentById(id);
+        if (p == null || p.typeId != ComponentType.LED) return;
+        int idx = 0;
+        for (int i = 0; i < LED_COLOR_PALETTE.length; i++) {
+            if (LED_COLOR_PALETTE[i] == p.ledColor) {
+                idx = i;
+                break;
+            }
+        }
+        p.ledColor = LED_COLOR_PALETTE[(idx + 1) % LED_COLOR_PALETTE.length];
+    }
+
+    /** ตั้งค่าความต้านทานเอง (โอห์ม) ให้ตัวต้านทานตัวนี้ ใส่ 0 หรือค่าติดลบเพื่อกลับไปใช้ค่าเริ่มต้น */
+    public void setResistorOhms(long id, double ohms) {
+        PlacedComponent p = findComponentById(id);
+        if (p == null || p.typeId != ComponentType.RESISTOR) return;
+        p.customOhms = ohms > 0 ? ohms : -1;
+    }
+
+    /** ตั้งค่าแรงดันเอง (โวลต์) ให้แบตเตอรี่ตัวนี้ ใส่ 0 หรือค่าติดลบเพื่อกลับไปใช้ค่าเริ่มต้น */
+    public void setBatteryVoltage(long id, double volts) {
+        PlacedComponent p = findComponentById(id);
+        if (p == null || p.typeId != ComponentType.BATTERY_9V) return;
+        p.customVoltage = volts > 0 ? volts : -1;
     }
 
     public PlacedComponent findComponentById(long id) {
@@ -92,9 +168,9 @@ public class CircuitDesignModel {
             union(parent, new TerminalRef(p.id, false), new TerminalRef(p.id, false));
         }
 
-        // สายไฟที่ผู้ใช้ลากต่อ = ความต้านทาน 0 โอห์ม รวมกลุ่มไฟฟ้าเดียวกัน
+        // สายไฟที่ผู้ใช้ลากต่อ (ขาอุปกรณ์ หรือรูเปล่า) = ความต้านทาน 0 โอห์ม รวมกลุ่มไฟฟ้าเดียวกัน
         for (Connection c : connections) {
-            union(parent, new TerminalRef(c.fromId, c.fromA), new TerminalRef(c.toId, c.toA));
+            union(parent, c.getFrom(), c.getTo());
         }
 
         // รูในแถบเดียวกันของเบรดบอร์ด (คอลัมน์เดียวกัน หรือแถบไฟบนล่าง) เชื่อมกันเองโดยไม่ต้องมีสาย
@@ -103,11 +179,14 @@ public class CircuitDesignModel {
             unionByNode(parent, nodeFirstSeen, new TerminalRef(p.id, true), p.row, p.colA);
             unionByNode(parent, nodeFirstSeen, new TerminalRef(p.id, false), p.row, p.colB);
         }
+        // จุดต่อที่เป็นรูเปล่าจากสายไฟก็ต้องรวมเข้ากลุ่มตามแถบบอร์ดเช่นกัน
+        for (Connection c : connections) {
+            if (c.fromIsHole) unionByNode(parent, nodeFirstSeen, c.getFrom(), c.fromRow, c.fromCol);
+            if (c.toIsHole) unionByNode(parent, nodeFirstSeen, c.getTo(), c.toRow, c.toCol);
+        }
 
         // กราฟย่อ: โหนด = กลุ่มไฟฟ้า, เส้นเชื่อม = ตัวอุปกรณ์ (resistor/LED/pushbutton) ที่คร่อมสองกลุ่มนั้น
-        Map<TerminalRef, List<long[]>> graph = new HashMap<>(); // key: group root, value: [otherGroupHash-not-used, componentId]
-        Map<TerminalRef, TerminalRef> groupNeighbor = new HashMap<>();
-        List<long[]> edgeList = new ArrayList<>(); // [componentId] with resolved endpoints stored separately
+        Map<TerminalRef, List<long[]>> graph = new HashMap<>();
         Map<Long, TerminalRef[]> edgeEndpoints = new HashMap<>();
 
         for (PlacedComponent p : components) {
@@ -161,25 +240,27 @@ public class CircuitDesignModel {
         boolean hasResistor = false;
         boolean hasLed = false;
         int ledCount = 0;
+        Set<Long> ledIdsOnPath = new HashSet<>();
 
         for (long componentId : pathComponentIds) {
             PlacedComponent p = findComponentById(componentId);
             if (p == null) continue;
             if (p.typeId == ComponentType.RESISTOR) {
                 hasResistor = true;
-                totalResistance += 220.0;
+                totalResistance += (p.customOhms > 0 ? p.customOhms : DEFAULT_RESISTOR_OHMS);
             } else if (p.typeId == ComponentType.LED) {
                 hasLed = true;
                 ledCount++;
+                ledIdsOnPath.add(componentId);
             }
         }
 
-        double sourceVoltage = 9.0;
+        double sourceVoltage = battery.customVoltage > 0 ? battery.customVoltage : DEFAULT_BATTERY_VOLTAGE;
         double forwardVoltageTotal = ledCount * 2.0;
         double effectiveVoltage = sourceVoltage - forwardVoltageTotal;
 
         if (hasLed && effectiveVoltage <= 0) {
-            return SimulationResult.build(hasResistor, true, totalResistance, 0, 0, false);
+            return SimulationResult.build(hasResistor, true, totalResistance, 0, 0, false, Collections.emptySet());
         }
 
         boolean overCurrentDanger = hasLed && !hasResistor;
@@ -187,13 +268,13 @@ public class CircuitDesignModel {
         if (totalResistance > 0) {
             current = effectiveVoltage / totalResistance;
         } else {
-            current = hasLed ? 1.5 : 0; // ไม่มีตัวต้านทานจำกัดกระแส = กระแสไหลเกินพิกัดทันที
+            current = hasLed ? 1.5 : 0;
             if (hasLed) overCurrentDanger = true;
         }
 
         double brightness = hasLed ? Math.min(1.0, (current * 1000.0) / 20.0) : 0;
 
-        return SimulationResult.build(hasResistor, hasLed, totalResistance, current, brightness, overCurrentDanger);
+        return SimulationResult.build(hasResistor, hasLed, totalResistance, current, brightness, overCurrentDanger, ledIdsOnPath);
     }
 
     private PlacedComponent firstOfType(int typeId) {
@@ -202,8 +283,6 @@ public class CircuitDesignModel {
         }
         return null;
     }
-
-    // --- Union-Find ช่วยจัดกลุ่มโหนดไฟฟ้าที่มีความต้านทาน 0 โอห์ม ---
 
     private TerminalRef find(Map<TerminalRef, TerminalRef> parent, TerminalRef t) {
         TerminalRef p = parent.get(t);
@@ -222,6 +301,7 @@ public class CircuitDesignModel {
 
     private void unionByNode(Map<TerminalRef, TerminalRef> parent, Map<String, TerminalRef> nodeFirstSeen,
                              TerminalRef terminal, int row, int col) {
+        if (row < 0 || col < 0) return; // อุปกรณ์วางอิสระนอกบอร์ด ไม่มีแถบไฟให้เชื่อมอัตโนมัติ
         String nodeId = BreadboardGrid.nodeIdFor(row, col);
         if (nodeId == null) return;
         TerminalRef existing = nodeFirstSeen.get(nodeId);

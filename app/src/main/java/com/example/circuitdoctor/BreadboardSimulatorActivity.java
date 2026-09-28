@@ -99,12 +99,25 @@ public class BreadboardSimulatorActivity extends AppCompatActivity {
             @Override
             public void onCircuitChanged() {
                 redoStack.clear();
+                if (simulating) {
+                    simulating = false;
+                    circuitCanvasView.clearSimulationResult();
+                }
                 updateToolbarState();
             }
 
             @Override
             public void onPlacementTypeConsumed() {
                 paletteAdapter.setSelectedTypeId(-1);
+            }
+
+            @Override
+            public void onEditPropertiesRequested(long componentId, int typeId) {
+                if (typeId == ComponentType.RESISTOR) {
+                    showResistorDialog(componentId);
+                } else if (typeId == ComponentType.BATTERY_9V) {
+                    showBatteryDialog(componentId);
+                }
             }
         });
     }
@@ -183,6 +196,77 @@ public class BreadboardSimulatorActivity extends AppCompatActivity {
         updateToolbarState();
     }
 
+    private void showResistorDialog(long componentId) {
+        PlacedComponent pc = model.findComponentById(componentId);
+        if (pc == null) return;
+        double current = pc.customOhms > 0 ? pc.customOhms : 220.0;
+
+        EditText input = new EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        input.setText(current == Math.rint(current) ? String.valueOf((long) current) : String.valueOf(current));
+        input.setSelection(input.getText().length());
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.circuit_edit_resistor_title)
+                .setMessage(R.string.circuit_edit_resistor_hint)
+                .setView(input)
+                .setPositiveButton(R.string.circuit_save_button_confirm, (dialog, which) -> {
+                    double ohms = parsePositiveDouble(input.getText().toString());
+                    if (ohms <= 0) {
+                        Toast.makeText(this, R.string.circuit_edit_value_invalid, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    applyPropertyChange(() -> model.setResistorOhms(componentId, ohms));
+                })
+                .setNegativeButton(R.string.circuit_save_button_cancel, null)
+                .show();
+    }
+
+    private void showBatteryDialog(long componentId) {
+        PlacedComponent pc = model.findComponentById(componentId);
+        if (pc == null) return;
+        double current = pc.customVoltage > 0 ? pc.customVoltage : 9.0;
+
+        EditText input = new EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        input.setText(current == Math.rint(current) ? String.valueOf((long) current) : String.valueOf(current));
+        input.setSelection(input.getText().length());
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.circuit_edit_battery_title)
+                .setMessage(R.string.circuit_edit_battery_hint)
+                .setView(input)
+                .setPositiveButton(R.string.circuit_save_button_confirm, (dialog, which) -> {
+                    double volts = parsePositiveDouble(input.getText().toString());
+                    if (volts <= 0) {
+                        Toast.makeText(this, R.string.circuit_edit_value_invalid, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    applyPropertyChange(() -> model.setBatteryVoltage(componentId, volts));
+                })
+                .setNegativeButton(R.string.circuit_save_button_cancel, null)
+                .show();
+    }
+
+    private double parsePositiveDouble(String text) {
+        try {
+            double v = Double.parseDouble(text.trim());
+            return v > 0 ? v : -1;
+        } catch (NumberFormatException | NullPointerException e) {
+            return -1;
+        }
+    }
+
+    private void applyPropertyChange(Runnable change) {
+        pushUndo();
+        change.run();
+        redoStack.clear();
+        simulating = false;
+        circuitCanvasView.clearSimulationResult();
+        circuitCanvasView.refresh();
+        updateToolbarState();
+    }
+
     private void pushUndo() {
         undoStack.push(model.snapshot());
         if (undoStack.size() > 30) {
@@ -192,6 +276,8 @@ public class BreadboardSimulatorActivity extends AppCompatActivity {
 
     private void handleUndo() {
         if (undoStack.isEmpty()) return;
+        simulating = false;
+        circuitCanvasView.clearSimulationResult();
         redoStack.push(model.snapshot());
         CircuitState prev = undoStack.pop();
         model.restore(prev);
@@ -204,6 +290,8 @@ public class BreadboardSimulatorActivity extends AppCompatActivity {
 
     private void handleRedo() {
         if (redoStack.isEmpty()) return;
+        simulating = false;
+        circuitCanvasView.clearSimulationResult();
         undoStack.push(model.snapshot());
         CircuitState next = redoStack.pop();
         model.restore(next);
@@ -219,6 +307,8 @@ public class BreadboardSimulatorActivity extends AppCompatActivity {
             Toast.makeText(this, R.string.circuit_select_component_first, Toast.LENGTH_SHORT).show();
             return;
         }
+        simulating = false;
+        circuitCanvasView.clearSimulationResult();
         pushUndo();
         model.removeComponent(selectedComponentId);
         redoStack.clear();
@@ -232,7 +322,10 @@ public class BreadboardSimulatorActivity extends AppCompatActivity {
         simulating = !simulating;
         if (simulating) {
             SimulationResult result = model.solve();
+            circuitCanvasView.showSimulationResult(result);
             showResultMessage(result);
+        } else {
+            circuitCanvasView.clearSimulationResult();
         }
         updateToolbarState();
     }

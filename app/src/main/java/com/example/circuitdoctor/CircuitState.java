@@ -14,7 +14,9 @@ public class CircuitState {
 
         this.connections = new ArrayList<>();
         for (Connection c : connections) {
-            this.connections.add(new Connection(c.fromId, c.fromA, c.toId, c.toA));
+            Connection copy = new Connection(c.getFrom(), c.getTo());
+            copy.color = c.color;
+            this.connections.add(copy);
         }
     }
 }

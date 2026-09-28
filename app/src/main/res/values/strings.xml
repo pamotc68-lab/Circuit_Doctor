@@ -147,6 +147,11 @@
     <string name="circuit_save_button_cancel">ยกเลิก</string>
     <string name="circuit_update_success">อัปเดตวงจรเรียบร้อยแล้ว</string>
     <string name="circuit_default_name">วงจรที่บันทึกไว้</string>
+    <string name="circuit_edit_resistor_title">ปรับค่าตัวต้านทาน</string>
+    <string name="circuit_edit_resistor_hint">ใส่ค่าความต้านทาน (โอห์ม)</string>
+    <string name="circuit_edit_battery_title">ปรับค่าแบตเตอรี่</string>
+    <string name="circuit_edit_battery_hint">ใส่ค่าแรงดันไฟ (โวลต์)</string>
+    <string name="circuit_edit_value_invalid">กรุณาใส่ตัวเลขที่มากกว่า 0</string>
     <string name="quiz_screen_title">แบบทดสอบต่อวงจร</string>
     <string name="quiz_level_easy">ระดับง่าย</string>
     <string name="quiz_level_medium">ระดับปานกลาง</string>
@@ -156,6 +161,7 @@
     <string name="challenge_missing_components">❌ วางอุปกรณ์ยังไม่ครบตามโจทย์</string>
     <string name="challenge_circuit_not_working">⚠️ ต่อวงจรยังไม่ถูกต้อง หรือวงจรยังไม่ปลอดภัย</string>
     <string name="challenge_success">✅ ถูกต้อง! ต่อวงจรตามโจทย์สำเร็จ</string>
+
     <string name="chat_screen_title">AI Assistant Chat</string>
     <string name="chat_input_hint">พิมพ์คำถามเกี่ยวกับวงจรไฟฟ้า...</string>
     <string name="chat_send_button">ส่ง</string>
