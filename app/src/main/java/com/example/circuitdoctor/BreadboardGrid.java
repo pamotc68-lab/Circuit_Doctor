@@ -4,22 +4,24 @@ public final class BreadboardGrid {
 
     private BreadboardGrid() {}
 
-    public static final int COLS = 30;
+    public static final int COLS = 60;
+    public static final int ROWS = 23;
     public static final float CELL = 70f;
     public static final float PADDING = 60f;
 
     public static final int ROW_TOP_RAIL_PLUS = 0;
     public static final int ROW_TOP_RAIL_MINUS = 1;
     public static final int[] ROW_TOP_SECTION = {3, 4, 5, 6, 7};
-    public static final int[] ROW_BOTTOM_SECTION = {9, 10, 11, 12, 13};
-    public static final int ROW_BOTTOM_RAIL_PLUS = 15;
-    public static final int ROW_BOTTOM_RAIL_MINUS = 16;
+    public static final int[] ROW_MID_SECTION = {9, 10, 11, 12, 13};
+    public static final int[] ROW_BOTTOM_SECTION = {15, 16, 17, 18, 19};
+    public static final int ROW_BOTTOM_RAIL_PLUS = 21;
+    public static final int ROW_BOTTOM_RAIL_MINUS = 22;
 
     public static float xFor(int col) { return PADDING + col * CELL; }
     public static float yFor(int row) { return PADDING + row * CELL; }
 
     public static float worldWidth() { return PADDING * 2 + (COLS - 1) * CELL; }
-    public static float worldHeight() { return PADDING * 2 + 16 * CELL; }
+    public static float worldHeight() { return PADDING * 2 + (ROWS - 1) * CELL; }
 
     /** คืนรหัสกลุ่มไฟฟ้าที่รูนี้สังกัด รูในกลุ่มเดียวกันถือว่าเชื่อมถึงกันโดยอัตโนมัติ (เหมือนเบรดบอร์ดจริง) */
     public static String nodeIdFor(int row, int col) {
@@ -28,6 +30,7 @@ public final class BreadboardGrid {
         if (row == ROW_BOTTOM_RAIL_PLUS) return "BR+";
         if (row == ROW_BOTTOM_RAIL_MINUS) return "BR-";
         for (int r : ROW_TOP_SECTION) if (r == row) return "T" + col;
+        for (int r : ROW_MID_SECTION) if (r == row) return "M" + col;
         for (int r : ROW_BOTTOM_SECTION) if (r == row) return "B" + col;
         return null;
     }
@@ -36,6 +39,7 @@ public final class BreadboardGrid {
     public static int[] nearestHole(float worldX, float worldY) {
         int[] rows = {ROW_TOP_RAIL_PLUS, ROW_TOP_RAIL_MINUS,
                 ROW_TOP_SECTION[0], ROW_TOP_SECTION[1], ROW_TOP_SECTION[2], ROW_TOP_SECTION[3], ROW_TOP_SECTION[4],
+                ROW_MID_SECTION[0], ROW_MID_SECTION[1], ROW_MID_SECTION[2], ROW_MID_SECTION[3], ROW_MID_SECTION[4],
                 ROW_BOTTOM_SECTION[0], ROW_BOTTOM_SECTION[1], ROW_BOTTOM_SECTION[2], ROW_BOTTOM_SECTION[3], ROW_BOTTOM_SECTION[4],
                 ROW_BOTTOM_RAIL_PLUS, ROW_BOTTOM_RAIL_MINUS};
 

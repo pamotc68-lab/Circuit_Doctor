@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PathMeasure;
 import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
@@ -26,21 +27,28 @@ public class CircuitCanvasView extends View {
             BreadboardGrid.ROW_TOP_RAIL_PLUS, BreadboardGrid.ROW_TOP_RAIL_MINUS,
             BreadboardGrid.ROW_TOP_SECTION[0], BreadboardGrid.ROW_TOP_SECTION[1], BreadboardGrid.ROW_TOP_SECTION[2],
             BreadboardGrid.ROW_TOP_SECTION[3], BreadboardGrid.ROW_TOP_SECTION[4],
+            BreadboardGrid.ROW_MID_SECTION[0], BreadboardGrid.ROW_MID_SECTION[1], BreadboardGrid.ROW_MID_SECTION[2],
+            BreadboardGrid.ROW_MID_SECTION[3], BreadboardGrid.ROW_MID_SECTION[4],
             BreadboardGrid.ROW_BOTTOM_SECTION[0], BreadboardGrid.ROW_BOTTOM_SECTION[1], BreadboardGrid.ROW_BOTTOM_SECTION[2],
             BreadboardGrid.ROW_BOTTOM_SECTION[3], BreadboardGrid.ROW_BOTTOM_SECTION[4],
             BreadboardGrid.ROW_BOTTOM_RAIL_PLUS, BreadboardGrid.ROW_BOTTOM_RAIL_MINUS
     };
 
-    private static final String[] TOP_ROW_LETTERS = {"j", "i", "h", "g", "f"};
+    private static final String[] TOP_ROW_LETTERS = {"o", "n", "m", "l", "k"};
+    private static final String[] MID_ROW_LETTERS = {"j", "i", "h", "g", "f"};
     private static final String[] BOTTOM_ROW_LETTERS = {"e", "d", "c", "b", "a"};
 
     private static final float TERMINAL_HIT_RADIUS = BreadboardGrid.CELL * 1.2f;
     private static final float HOLE_HIT_RADIUS = BreadboardGrid.CELL * 0.45f;
+    private static final float WIRE_HIT_RADIUS = BreadboardGrid.CELL * 0.35f;
     private static final float TAP_SLOP = 20f;
     private static final float OUTSIDE_MARGIN_RATIO = 0.28f;
 
     private static final float MIN_USER_SCALE = 0.6f;
     private static final float MAX_USER_SCALE = 3f;
+
+    private static final float BODY_PAD_X = 48f;
+    private static final float BODY_PAD_Y = 58f;
 
     private static final int[] WIRE_COLOR_PALETTE = {
             0xFF2E7D32, // เขียว
@@ -63,6 +71,9 @@ public class CircuitCanvasView extends View {
     private Integer pendingPlacementTypeId = null;
 
     private TerminalRef downTerminal = null;
+    private Connection downWire = null;
+    private Connection selectedWire = null;
+    private boolean draggingComponent = false;
     private float downX, downY;
     private float dragX, dragY;
     private boolean movedBeyondSlop = false;
@@ -71,7 +82,6 @@ public class CircuitCanvasView extends View {
     private float offsetX = 0f;
     private float offsetY = 0f;
 
-    // ===== ซูม/เลื่อนมุมมองที่ผู้ใช้ปรับเอง (บีบนิ้ว/ลากสองนิ้ว) =====
     private float userScale = 1f;
     private float panX = 0f;
     private float panY = 0f;
@@ -80,17 +90,25 @@ public class CircuitCanvasView extends View {
     private float lastFocusX, lastFocusY;
     private final ScaleGestureDetector scaleDetector;
 
-    // ===== ปุ่มเปลี่ยนสีสายไฟ (วาดลอยมุมขวาบน ไม่ผูกกับซูม/เลื่อน) =====
     private int wireColorIndex = 0;
     private int currentWireColor = WIRE_COLOR_PALETTE[0];
     private boolean pendingWireColorButtonPress = false;
     private float wireBtnCx, wireBtnCy, wireBtnR;
 
-    // ===== ปุ่มปรับค่าอุปกรณ์ (สี LED / โอห์ม / โวลต์แบต) วาดลอยมุมขวาบน ใต้ปุ่มสีสาย =====
     private boolean pendingPropButtonPress = false;
     private float propBtnCx, propBtnCy, propBtnR;
 
-    // ===== พื้นบอร์ด / ราง / ป้ายกำกับ =====
+    private boolean pendingDeleteWireButtonPress = false;
+    private float deleteBtnCx, deleteBtnCy, deleteBtnR;
+
+    private boolean pendingFlipButtonPress = false;
+    private float flipBtnCx, flipBtnCy, flipBtnR;
+
+    private boolean pendingRotateButtonPress = false;
+    private float rotateBtnCx, rotateBtnCy, rotateBtnR;
+
+    private int buttonStackIndex;
+
     private final Paint workspacePaint = new Paint();
     private final Paint boardPaint = new Paint();
     private final Paint boardBorderPaint = new Paint();
@@ -101,60 +119,83 @@ public class CircuitCanvasView extends View {
     private final Paint railLabelPaint = new Paint();
     private final Paint boardLabelPaint = new Paint();
 
-    // ===== ทั่วไป (เงา/เลือก/ป้ายชื่อสำรอง) =====
     private final Paint componentShadowPaint = new Paint();
     private final Paint componentSelectedPaint = new Paint();
     private final Paint componentSelectedGlowPaint = new Paint();
+    private final Paint componentMovePreviewPaint = new Paint();
     private final Paint componentTextPaint = new Paint();
     private final Paint fallbackChipPaint = new Paint();
     private final Paint leadPaint = new Paint();
 
-    // ===== ตัวต้านทาน =====
     private final Paint resistorBodyPaint = new Paint();
     private final Paint resistorBorderPaint = new Paint();
     private final Paint resistorBandPaint = new Paint();
 
-    // ===== LED =====
     private final Paint ledBodyPaint = new Paint();
     private final Paint ledBorderPaint = new Paint();
     private final Paint ledHighlightPaint = new Paint();
     private final Paint ledGlowPaint = new Paint();
 
-    // ===== ปุ่มกด =====
     private final Paint buttonCapPaint = new Paint();
     private final Paint buttonCapBorderPaint = new Paint();
     private final Paint buttonCenterPaint = new Paint();
     private final Paint buttonLegPaint = new Paint();
+    private final Paint buttonCapPressedPaint = new Paint();
+    private final Paint buttonPressedCenterPaint = new Paint();
+    private final Paint buttonPressedGlowPaint = new Paint();
 
-    // ===== แบตเตอรี่ 9V =====
+    private final Paint capacitorBodyPaint = new Paint();
+    private final Paint capacitorBorderPaint = new Paint();
+    private final Paint capacitorHighlightPaint = new Paint();
+
+    private final Paint slideSwitchBodyPaint = new Paint();
+    private final Paint slideSwitchBorderPaint = new Paint();
+    private final Paint slideSwitchKnobPaint = new Paint();
+    private final Paint slideSwitchKnobBorderPaint = new Paint();
+
     private final Paint batteryBoxPaint = new Paint();
     private final Paint batteryBoxBorderPaint = new Paint();
     private final Paint batteryClipPaint = new Paint();
     private final Paint batteryTerminalPosPaint = new Paint();
     private final Paint batteryTerminalNegPaint = new Paint();
     private final Paint batteryTextPaint = new Paint();
+    private final Paint batteryWireNegPaint = new Paint();
+    private final Paint batteryWirePosPaint = new Paint();
+    private final Paint batteryPolarityPaint = new Paint();
 
-    // ===== สายไฟ =====
     private final Paint wireShadowPaint = new Paint();
     private final Paint wirePaint = new Paint();
     private final Paint wirePreviewPaint = new Paint();
+    private final Paint wireSelectedGlowPaint = new Paint();
     private final Paint terminalDotPaint = new Paint();
     private final Paint terminalHighlightPaint = new Paint();
     private final Paint holeHighlightPaint = new Paint();
 
-    // ===== ปุ่มเปลี่ยนสีสายไฟ =====
     private final Paint wireColorButtonPaint = new Paint();
     private final Paint wireColorButtonBorderPaint = new Paint();
     private final Paint wireColorButtonLabelPaint = new Paint();
     private final Paint wireColorButtonOutlinePaint = new Paint();
 
-    // ===== ปุ่มปรับค่าอุปกรณ์ =====
     private final Paint propButtonPaint = new Paint();
     private final Paint propButtonBorderPaint = new Paint();
     private final Paint propButtonLabelPaint = new Paint();
     private final Paint propButtonOutlinePaint = new Paint();
 
-    // ===== ป้ายค่าอุปกรณ์ (โอห์ม/โวลต์) =====
+    private final Paint deleteWireButtonPaint = new Paint();
+    private final Paint deleteWireButtonBorderPaint = new Paint();
+    private final Paint deleteWireButtonLabelPaint = new Paint();
+    private final Paint deleteWireButtonOutlinePaint = new Paint();
+
+    private final Paint flipButtonPaint = new Paint();
+    private final Paint flipButtonBorderPaint = new Paint();
+    private final Paint flipButtonLabelPaint = new Paint();
+    private final Paint flipButtonOutlinePaint = new Paint();
+
+    private final Paint rotateButtonPaint = new Paint();
+    private final Paint rotateButtonBorderPaint = new Paint();
+    private final Paint rotateButtonLabelPaint = new Paint();
+    private final Paint rotateButtonOutlinePaint = new Paint();
+
     private final Paint valueLabelPaint = new Paint();
     private final Paint valueLabelOutlinePaint = new Paint();
 
@@ -226,6 +267,12 @@ public class CircuitCanvasView extends View {
         componentSelectedGlowPaint.setStrokeWidth(14f);
         componentSelectedGlowPaint.setAntiAlias(true);
 
+        componentMovePreviewPaint.setColor(Color.parseColor("#8800BCD4"));
+        componentMovePreviewPaint.setStyle(Paint.Style.STROKE);
+        componentMovePreviewPaint.setStrokeWidth(4f);
+        componentMovePreviewPaint.setAntiAlias(true);
+        componentMovePreviewPaint.setPathEffect(new DashPathEffect(new float[]{10f, 8f}, 0));
+
         componentTextPaint.setColor(Color.WHITE);
         componentTextPaint.setTextSize(20f);
         componentTextPaint.setAntiAlias(true);
@@ -235,18 +282,18 @@ public class CircuitCanvasView extends View {
         fallbackChipPaint.setStyle(Paint.Style.FILL);
         fallbackChipPaint.setAntiAlias(true);
 
-        leadPaint.setColor(Color.parseColor("#8A8A8A"));
+        leadPaint.setColor(Color.parseColor("#9C9C9C"));
         leadPaint.setStyle(Paint.Style.STROKE);
         leadPaint.setStrokeCap(Paint.Cap.ROUND);
         leadPaint.setAntiAlias(true);
 
-        resistorBodyPaint.setColor(Color.parseColor("#E0C08A"));
+        resistorBodyPaint.setColor(Color.parseColor("#E6C68E"));
         resistorBodyPaint.setStyle(Paint.Style.FILL);
         resistorBodyPaint.setAntiAlias(true);
 
         resistorBorderPaint.setColor(Color.parseColor("#A3824F"));
         resistorBorderPaint.setStyle(Paint.Style.STROKE);
-        resistorBorderPaint.setStrokeWidth(2f);
+        resistorBorderPaint.setStrokeWidth(2.4f);
         resistorBorderPaint.setAntiAlias(true);
 
         resistorBandPaint.setStyle(Paint.Style.FILL);
@@ -256,45 +303,88 @@ public class CircuitCanvasView extends View {
         ledBodyPaint.setStyle(Paint.Style.FILL);
         ledBodyPaint.setAntiAlias(true);
 
-        ledBorderPaint.setColor(Color.parseColor("#5A0F0F"));
+        ledBorderPaint.setColor(Color.parseColor("#4A0C0C"));
         ledBorderPaint.setStyle(Paint.Style.STROKE);
-        ledBorderPaint.setStrokeWidth(2f);
+        ledBorderPaint.setStrokeWidth(2.4f);
         ledBorderPaint.setAntiAlias(true);
 
-        ledHighlightPaint.setColor(Color.parseColor("#55FFFFFF"));
+        ledHighlightPaint.setColor(Color.parseColor("#66FFFFFF"));
         ledHighlightPaint.setStyle(Paint.Style.FILL);
         ledHighlightPaint.setAntiAlias(true);
 
         ledGlowPaint.setStyle(Paint.Style.FILL);
         ledGlowPaint.setAntiAlias(true);
 
-        buttonCapPaint.setColor(Color.parseColor("#BDBDBD"));
+        buttonCapPaint.setColor(Color.parseColor("#C2C2C2"));
         buttonCapPaint.setStyle(Paint.Style.FILL);
         buttonCapPaint.setAntiAlias(true);
 
         buttonCapBorderPaint.setColor(Color.parseColor("#7A7A7A"));
         buttonCapBorderPaint.setStyle(Paint.Style.STROKE);
-        buttonCapBorderPaint.setStrokeWidth(2f);
+        buttonCapBorderPaint.setStrokeWidth(2.4f);
         buttonCapBorderPaint.setAntiAlias(true);
 
-        buttonCenterPaint.setColor(Color.parseColor("#616161"));
+        buttonCenterPaint.setColor(Color.parseColor("#5A5A5A"));
         buttonCenterPaint.setStyle(Paint.Style.FILL);
         buttonCenterPaint.setAntiAlias(true);
 
-        buttonLegPaint.setColor(Color.parseColor("#5A5A5A"));
+        buttonLegPaint.setColor(Color.parseColor("#8A8A8A"));
         buttonLegPaint.setStyle(Paint.Style.FILL);
         buttonLegPaint.setAntiAlias(true);
 
-        batteryBoxPaint.setColor(Color.parseColor("#C97B3D"));
+        buttonCapPressedPaint.setColor(Color.parseColor("#A5D6A7"));
+        buttonCapPressedPaint.setStyle(Paint.Style.FILL);
+        buttonCapPressedPaint.setAntiAlias(true);
+
+        buttonPressedCenterPaint.setColor(Color.parseColor("#2E7D32"));
+        buttonPressedCenterPaint.setStyle(Paint.Style.FILL);
+        buttonPressedCenterPaint.setAntiAlias(true);
+
+        buttonPressedGlowPaint.setColor(Color.parseColor("#4CAF50"));
+        buttonPressedGlowPaint.setStyle(Paint.Style.FILL);
+        buttonPressedGlowPaint.setAntiAlias(true);
+
+        capacitorBodyPaint.setColor(Color.parseColor("#2979FF"));
+        capacitorBodyPaint.setStyle(Paint.Style.FILL);
+        capacitorBodyPaint.setAntiAlias(true);
+
+        capacitorBorderPaint.setColor(Color.parseColor("#1559B0"));
+        capacitorBorderPaint.setStyle(Paint.Style.STROKE);
+        capacitorBorderPaint.setStrokeWidth(2.4f);
+        capacitorBorderPaint.setAntiAlias(true);
+
+        capacitorHighlightPaint.setColor(Color.parseColor("#66FFFFFF"));
+        capacitorHighlightPaint.setStyle(Paint.Style.FILL);
+        capacitorHighlightPaint.setAntiAlias(true);
+
+        slideSwitchBodyPaint.setColor(Color.parseColor("#2B2B2B"));
+        slideSwitchBodyPaint.setStyle(Paint.Style.FILL);
+        slideSwitchBodyPaint.setAntiAlias(true);
+
+        slideSwitchBorderPaint.setColor(Color.parseColor("#141414"));
+        slideSwitchBorderPaint.setStyle(Paint.Style.STROKE);
+        slideSwitchBorderPaint.setStrokeWidth(2.2f);
+        slideSwitchBorderPaint.setAntiAlias(true);
+
+        slideSwitchKnobPaint.setColor(Color.parseColor("#F5F5F5"));
+        slideSwitchKnobPaint.setStyle(Paint.Style.FILL);
+        slideSwitchKnobPaint.setAntiAlias(true);
+
+        slideSwitchKnobBorderPaint.setColor(Color.parseColor("#9C9C9C"));
+        slideSwitchKnobBorderPaint.setStyle(Paint.Style.STROKE);
+        slideSwitchKnobBorderPaint.setStrokeWidth(1.8f);
+        slideSwitchKnobBorderPaint.setAntiAlias(true);
+
+        batteryBoxPaint.setColor(Color.parseColor("#2B2B2B"));
         batteryBoxPaint.setStyle(Paint.Style.FILL);
         batteryBoxPaint.setAntiAlias(true);
 
-        batteryBoxBorderPaint.setColor(Color.parseColor("#8A501F"));
+        batteryBoxBorderPaint.setColor(Color.parseColor("#141414"));
         batteryBoxBorderPaint.setStyle(Paint.Style.STROKE);
-        batteryBoxBorderPaint.setStrokeWidth(2f);
+        batteryBoxBorderPaint.setStrokeWidth(2.4f);
         batteryBoxBorderPaint.setAntiAlias(true);
 
-        batteryClipPaint.setColor(Color.parseColor("#212121"));
+        batteryClipPaint.setColor(Color.parseColor("#C97B3D"));
         batteryClipPaint.setStyle(Paint.Style.FILL);
         batteryClipPaint.setAntiAlias(true);
 
@@ -311,23 +401,44 @@ public class CircuitCanvasView extends View {
         batteryTextPaint.setTextAlign(Paint.Align.CENTER);
         batteryTextPaint.setFakeBoldText(true);
 
+        batteryWireNegPaint.setColor(Color.parseColor("#212121"));
+        batteryWireNegPaint.setStyle(Paint.Style.STROKE);
+        batteryWireNegPaint.setStrokeCap(Paint.Cap.ROUND);
+        batteryWireNegPaint.setAntiAlias(true);
+
+        batteryWirePosPaint.setColor(Color.parseColor("#E53935"));
+        batteryWirePosPaint.setStyle(Paint.Style.STROKE);
+        batteryWirePosPaint.setStrokeCap(Paint.Cap.ROUND);
+        batteryWirePosPaint.setAntiAlias(true);
+
+        batteryPolarityPaint.setColor(Color.WHITE);
+        batteryPolarityPaint.setFakeBoldText(true);
+        batteryPolarityPaint.setAntiAlias(true);
+
         wireShadowPaint.setColor(Color.parseColor("#33000000"));
-        wireShadowPaint.setStrokeWidth(9f);
+        wireShadowPaint.setStrokeWidth(14f);
         wireShadowPaint.setStyle(Paint.Style.STROKE);
         wireShadowPaint.setAntiAlias(true);
         wireShadowPaint.setStrokeCap(Paint.Cap.ROUND);
 
-        wirePaint.setStrokeWidth(6f);
+        wirePaint.setStrokeWidth(11f);
         wirePaint.setStyle(Paint.Style.STROKE);
         wirePaint.setAntiAlias(true);
         wirePaint.setStrokeCap(Paint.Cap.ROUND);
 
         wirePreviewPaint.setColor(Color.parseColor("#FFA500"));
-        wirePreviewPaint.setStrokeWidth(5f);
+        wirePreviewPaint.setStrokeWidth(9f);
         wirePreviewPaint.setStyle(Paint.Style.STROKE);
         wirePreviewPaint.setAntiAlias(true);
         wirePreviewPaint.setStrokeCap(Paint.Cap.ROUND);
         wirePreviewPaint.setPathEffect(new DashPathEffect(new float[]{16f, 10f}, 0));
+
+        wireSelectedGlowPaint.setColor(Color.parseColor("#FFFFFF"));
+        wireSelectedGlowPaint.setStyle(Paint.Style.STROKE);
+        wireSelectedGlowPaint.setStrokeWidth(18f);
+        wireSelectedGlowPaint.setAntiAlias(true);
+        wireSelectedGlowPaint.setStrokeCap(Paint.Cap.ROUND);
+        wireSelectedGlowPaint.setPathEffect(new DashPathEffect(new float[]{4f, 6f}, 0));
 
         terminalDotPaint.setColor(Color.parseColor("#3A3A3A"));
         terminalDotPaint.setStyle(Paint.Style.FILL);
@@ -350,13 +461,13 @@ public class CircuitCanvasView extends View {
         wireColorButtonBorderPaint.setAntiAlias(true);
 
         wireColorButtonLabelPaint.setColor(Color.WHITE);
-        wireColorButtonLabelPaint.setTextSize(15f);
+        wireColorButtonLabelPaint.setTextSize(19f);
         wireColorButtonLabelPaint.setTextAlign(Paint.Align.CENTER);
         wireColorButtonLabelPaint.setFakeBoldText(true);
         wireColorButtonLabelPaint.setAntiAlias(true);
 
         wireColorButtonOutlinePaint.setColor(Color.parseColor("#80000000"));
-        wireColorButtonOutlinePaint.setTextSize(15f);
+        wireColorButtonOutlinePaint.setTextSize(19f);
         wireColorButtonOutlinePaint.setTextAlign(Paint.Align.CENTER);
         wireColorButtonOutlinePaint.setFakeBoldText(true);
         wireColorButtonOutlinePaint.setStyle(Paint.Style.STROKE);
@@ -373,18 +484,87 @@ public class CircuitCanvasView extends View {
         propButtonBorderPaint.setAntiAlias(true);
 
         propButtonLabelPaint.setColor(Color.WHITE);
-        propButtonLabelPaint.setTextSize(15f);
+        propButtonLabelPaint.setTextSize(19f);
         propButtonLabelPaint.setTextAlign(Paint.Align.CENTER);
         propButtonLabelPaint.setFakeBoldText(true);
         propButtonLabelPaint.setAntiAlias(true);
 
         propButtonOutlinePaint.setColor(Color.parseColor("#80000000"));
-        propButtonOutlinePaint.setTextSize(15f);
+        propButtonOutlinePaint.setTextSize(19f);
         propButtonOutlinePaint.setTextAlign(Paint.Align.CENTER);
         propButtonOutlinePaint.setFakeBoldText(true);
         propButtonOutlinePaint.setStyle(Paint.Style.STROKE);
         propButtonOutlinePaint.setStrokeWidth(4f);
         propButtonOutlinePaint.setAntiAlias(true);
+
+        deleteWireButtonPaint.setColor(Color.parseColor("#E53935"));
+        deleteWireButtonPaint.setStyle(Paint.Style.FILL);
+        deleteWireButtonPaint.setAntiAlias(true);
+
+        deleteWireButtonBorderPaint.setColor(Color.WHITE);
+        deleteWireButtonBorderPaint.setStyle(Paint.Style.STROKE);
+        deleteWireButtonBorderPaint.setStrokeWidth(4f);
+        deleteWireButtonBorderPaint.setAntiAlias(true);
+
+        deleteWireButtonLabelPaint.setColor(Color.WHITE);
+        deleteWireButtonLabelPaint.setTextSize(19f);
+        deleteWireButtonLabelPaint.setTextAlign(Paint.Align.CENTER);
+        deleteWireButtonLabelPaint.setFakeBoldText(true);
+        deleteWireButtonLabelPaint.setAntiAlias(true);
+
+        deleteWireButtonOutlinePaint.setColor(Color.parseColor("#80000000"));
+        deleteWireButtonOutlinePaint.setTextSize(19f);
+        deleteWireButtonOutlinePaint.setTextAlign(Paint.Align.CENTER);
+        deleteWireButtonOutlinePaint.setFakeBoldText(true);
+        deleteWireButtonOutlinePaint.setStyle(Paint.Style.STROKE);
+        deleteWireButtonOutlinePaint.setStrokeWidth(4f);
+        deleteWireButtonOutlinePaint.setAntiAlias(true);
+
+        flipButtonPaint.setColor(Color.parseColor("#00897B"));
+        flipButtonPaint.setStyle(Paint.Style.FILL);
+        flipButtonPaint.setAntiAlias(true);
+
+        flipButtonBorderPaint.setColor(Color.WHITE);
+        flipButtonBorderPaint.setStyle(Paint.Style.STROKE);
+        flipButtonBorderPaint.setStrokeWidth(4f);
+        flipButtonBorderPaint.setAntiAlias(true);
+
+        flipButtonLabelPaint.setColor(Color.WHITE);
+        flipButtonLabelPaint.setTextSize(19f);
+        flipButtonLabelPaint.setTextAlign(Paint.Align.CENTER);
+        flipButtonLabelPaint.setFakeBoldText(true);
+        flipButtonLabelPaint.setAntiAlias(true);
+
+        flipButtonOutlinePaint.setColor(Color.parseColor("#80000000"));
+        flipButtonOutlinePaint.setTextSize(19f);
+        flipButtonOutlinePaint.setTextAlign(Paint.Align.CENTER);
+        flipButtonOutlinePaint.setFakeBoldText(true);
+        flipButtonOutlinePaint.setStyle(Paint.Style.STROKE);
+        flipButtonOutlinePaint.setStrokeWidth(4f);
+        flipButtonOutlinePaint.setAntiAlias(true);
+
+        rotateButtonPaint.setColor(Color.parseColor("#6D4C41"));
+        rotateButtonPaint.setStyle(Paint.Style.FILL);
+        rotateButtonPaint.setAntiAlias(true);
+
+        rotateButtonBorderPaint.setColor(Color.WHITE);
+        rotateButtonBorderPaint.setStyle(Paint.Style.STROKE);
+        rotateButtonBorderPaint.setStrokeWidth(4f);
+        rotateButtonBorderPaint.setAntiAlias(true);
+
+        rotateButtonLabelPaint.setColor(Color.WHITE);
+        rotateButtonLabelPaint.setTextSize(19f);
+        rotateButtonLabelPaint.setTextAlign(Paint.Align.CENTER);
+        rotateButtonLabelPaint.setFakeBoldText(true);
+        rotateButtonLabelPaint.setAntiAlias(true);
+
+        rotateButtonOutlinePaint.setColor(Color.parseColor("#80000000"));
+        rotateButtonOutlinePaint.setTextSize(19f);
+        rotateButtonOutlinePaint.setTextAlign(Paint.Align.CENTER);
+        rotateButtonOutlinePaint.setFakeBoldText(true);
+        rotateButtonOutlinePaint.setStyle(Paint.Style.STROKE);
+        rotateButtonOutlinePaint.setStrokeWidth(4f);
+        rotateButtonOutlinePaint.setAntiAlias(true);
 
         valueLabelPaint.setColor(Color.parseColor("#FFECB3"));
         valueLabelPaint.setTextAlign(Paint.Align.CENTER);
@@ -411,13 +591,17 @@ public class CircuitCanvasView extends View {
     public void setPendingPlacementType(Integer typeId) {
         this.pendingPlacementTypeId = typeId;
         this.selectedId = null;
+        this.selectedWire = null;
         invalidate();
     }
 
     public void clearSelection() {
         selectedId = null;
+        selectedWire = null;
         pendingPlacementTypeId = null;
         downTerminal = null;
+        downWire = null;
+        draggingComponent = false;
         movedBeyondSlop = false;
         invalidate();
     }
@@ -495,6 +679,12 @@ public class CircuitCanvasView extends View {
         return (baseY - offsetY) / scale;
     }
 
+    /** ครึ่งหนึ่งของระยะห่างระหว่างขาอุปกรณ์ (เมื่อวางอิสระนอกบอร์ด) — สวิตช์เลื่อนมี 3 ขาจึงกว้างกว่าอุปกรณ์ 2 ขาทั่วไป */
+    private float halfSpanFor(PlacedComponent pc) {
+        int span = pc.typeId == ComponentType.SLIDESWITCH ? PlacedComponent.SWITCH_SPAN_COLUMNS : PlacedComponent.SPAN_COLUMNS;
+        return (BreadboardGrid.CELL * span) / 2f;
+    }
+
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
@@ -505,9 +695,14 @@ public class CircuitCanvasView extends View {
         drawGrid(canvas);
         drawWires(canvas);
         drawComponents(canvas);
+        drawComponentMovePreview(canvas);
         drawDragPreview(canvas);
         drawWireColorButton(canvas);
+        buttonStackIndex = 0;
         drawPropertiesButton(canvas);
+        drawFlipButton(canvas);
+        drawRotateButton(canvas);
+        drawDeleteWireButton(canvas);
     }
 
     private void drawBoardBackground(Canvas canvas) {
@@ -538,6 +733,7 @@ public class CircuitCanvasView extends View {
         drawColumnLabels(canvas, BreadboardGrid.ROW_TOP_SECTION[0], -1);
         drawColumnLabels(canvas, BreadboardGrid.ROW_BOTTOM_SECTION[4], 1);
         drawRowLabels(canvas, BreadboardGrid.ROW_TOP_SECTION, TOP_ROW_LETTERS);
+        drawRowLabels(canvas, BreadboardGrid.ROW_MID_SECTION, MID_ROW_LETTERS);
         drawRowLabels(canvas, BreadboardGrid.ROW_BOTTOM_SECTION, BOTTOM_ROW_LETTERS);
     }
 
@@ -575,24 +771,42 @@ public class CircuitCanvasView extends View {
             ComponentType type = catalog.findById(getContext(), pc.typeId);
             if (type == null) continue;
 
-            float x1, x2, cy;
+            float p1x, p1y, p2x, p2y;
             if (pc.freePlaced) {
-                float halfSpan = (BreadboardGrid.CELL * PlacedComponent.SPAN_COLUMNS) / 2f;
-                x1 = screenX(pc.freeX - halfSpan);
-                x2 = screenX(pc.freeX + halfSpan);
-                cy = screenY(pc.freeY);
+                float halfSpan = halfSpanFor(pc);
+                p1x = screenX(pc.freeX - halfSpan);
+                p1y = screenY(pc.freeY);
+                p2x = screenX(pc.freeX + halfSpan);
+                p2y = p1y;
+            } else if (pc.vertical) {
+                p1x = screenX(BreadboardGrid.xFor(pc.colA));
+                p1y = screenY(BreadboardGrid.yFor(pc.row));
+                p2x = p1x;
+                p2y = screenY(BreadboardGrid.yFor(pc.rowB));
             } else {
-                x1 = screenX(BreadboardGrid.xFor(pc.colA));
-                x2 = screenX(BreadboardGrid.xFor(pc.colB));
-                cy = screenY(BreadboardGrid.yFor(pc.row));
+                p1x = screenX(BreadboardGrid.xFor(pc.colA));
+                p1y = screenY(BreadboardGrid.yFor(pc.row));
+                p2x = screenX(BreadboardGrid.xFor(pc.colB));
+                p2y = p1y;
             }
 
-            float left = Math.min(x1, x2) - 36f * zoomedScale();
-            float right = Math.max(x1, x2) + 36f * zoomedScale();
-            float top = cy - 44f * zoomedScale();
-            float bottom = cy + 44f * zoomedScale();
+            boolean vertical = !pc.freePlaced && pc.vertical;
+            float cx = (p1x + p2x) / 2f;
+            float cy = (p1y + p2y) / 2f;
+            float halfLen = Math.max(Math.abs(p2x - p1x), Math.abs(p2y - p1y)) / 2f;
+
+            float leftHoleX = cx - halfLen;
+            float rightHoleX = cx + halfLen;
+
+            float left = leftHoleX - BODY_PAD_X * zoomedScale();
+            float right = rightHoleX + BODY_PAD_X * zoomedScale();
+            float top = cy - BODY_PAD_Y * zoomedScale();
+            float bottom = cy + BODY_PAD_Y * zoomedScale();
 
             RectF body = new RectF(left, top, right, bottom);
+
+            canvas.save();
+            canvas.rotate(vertical ? 90f : 0f, cx, cy);
 
             if (selectedId != null && selectedId == pc.id) {
                 RectF glow = new RectF(body);
@@ -605,27 +819,38 @@ public class CircuitCanvasView extends View {
             shadow.offset(0f, 4f * zoomedScale());
             canvas.drawOval(shadow, componentShadowPaint);
 
-            leadPaint.setStrokeWidth(Math.max(2f, 3f * zoomedScale()));
+            leadPaint.setStrokeWidth(Math.max(2.6f, 4f * zoomedScale()));
 
-            drawComponentIcon(canvas, pc, type, body);
-            drawValueLabel(canvas, pc, body);
+            drawComponentIcon(canvas, pc, type, body, leftHoleX, rightHoleX, cy);
 
             if (selectedId != null && selectedId == pc.id) {
                 canvas.drawRoundRect(body, 14f, 14f, componentSelectedPaint);
             }
+
+            canvas.restore();
+
+            drawValueLabel(canvas, pc, cx, cy, halfLen, vertical);
         }
     }
 
-    private void drawComponentIcon(Canvas canvas, PlacedComponent pc, ComponentType type, RectF body) {
+    private void drawComponentIcon(Canvas canvas, PlacedComponent pc, ComponentType type, RectF body,
+                                   float leftHoleX, float rightHoleX, float holeY) {
         int typeId = pc.typeId;
+        boolean mirrored = !pc.freePlaced && (pc.vertical ? pc.row > pc.rowB : pc.colA > pc.colB);
+
         if (typeId == ComponentType.BATTERY_9V) {
-            drawBatteryIcon(canvas, body, pc.customVoltage > 0 ? pc.customVoltage : 9.0);
+            drawBatteryIcon(canvas, body, pc.customVoltage > 0 ? pc.customVoltage : 9.0, mirrored, leftHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.RESISTOR) {
-            drawResistorIcon(canvas, body);
+            drawResistorIcon(canvas, body, mirrored, leftHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.LED) {
-            drawLedIcon(canvas, body, isLedLitComponent(pc.id), pc.ledColor);
+            drawLedIcon(canvas, body, isLedLitComponent(pc.id), pc.ledColor, mirrored, leftHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.PUSHBUTTON) {
-            drawButtonIcon(canvas, body);
+            drawButtonIcon(canvas, body, pc.pressed, leftHoleX, rightHoleX, holeY);
+        } else if (typeId == ComponentType.CAPACITOR) {
+            drawCapacitorIcon(canvas, body, leftHoleX, rightHoleX, holeY);
+        } else if (typeId == ComponentType.SLIDESWITCH) {
+            float midHoleX = (leftHoleX + rightHoleX) / 2f;
+            drawSlideSwitchIcon(canvas, body, pc.slideToB, leftHoleX, midHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.BREADBOARD) {
             drawBreadboardIcon(canvas, body);
         } else {
@@ -635,7 +860,7 @@ public class CircuitCanvasView extends View {
         }
     }
 
-    private void drawValueLabel(Canvas canvas, PlacedComponent pc, RectF body) {
+    private void drawValueLabel(Canvas canvas, PlacedComponent pc, float cx, float cy, float halfLen, boolean vertical) {
         String text = null;
         if (pc.typeId == ComponentType.RESISTOR) {
             double ohms = pc.customOhms > 0 ? pc.customOhms : 220.0;
@@ -649,67 +874,94 @@ public class CircuitCanvasView extends View {
         float size = Math.max(11f, 12f * zoomedScale());
         valueLabelPaint.setTextSize(size);
         valueLabelOutlinePaint.setTextSize(size);
-        float y = body.top - 6f * zoomedScale();
-        canvas.drawText(text, body.centerX(), y, valueLabelOutlinePaint);
-        canvas.drawText(text, body.centerX(), y, valueLabelPaint);
+
+        float topY = vertical ? cy - (halfLen + BODY_PAD_X * zoomedScale()) : cy - BODY_PAD_Y * zoomedScale();
+        float y = topY - 6f * zoomedScale();
+        canvas.drawText(text, cx, y, valueLabelOutlinePaint);
+        canvas.drawText(text, cx, y, valueLabelPaint);
     }
 
-    private void drawResistorIcon(Canvas canvas, RectF body) {
+    private void drawResistorIcon(Canvas canvas, RectF body, boolean mirrored, float leftHoleX, float rightHoleX, float holeY) {
         float cx = body.centerX();
         float cy = body.centerY();
-        float bodyW = body.width() * 0.48f;
-        float bodyH = body.height() * 0.34f;
+        float bodyW = body.width() * 0.56f;
+        float bodyH = body.height() * 0.40f;
         RectF res = new RectF(cx - bodyW / 2f, cy - bodyH / 2f, cx + bodyW / 2f, cy + bodyH / 2f);
-        float leadPad = body.width() * 0.06f;
 
-        canvas.drawLine(body.left + leadPad, cy, res.left, cy, leadPaint);
-        canvas.drawLine(res.right, cy, body.right - leadPad, cy, leadPaint);
+        // ขาตัวต้านทาน ยึดตำแหน่งรูบอร์ดจริงเสมอ ไม่ขึ้นกับการพลิก
+        canvas.drawLine(leftHoleX, holeY, res.left, cy, leadPaint);
+        canvas.drawLine(res.right, cy, rightHoleX, holeY, leadPaint);
+        canvas.drawCircle(leftHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+        canvas.drawCircle(rightHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        // ตัวถัง + แถบสี: พลิกรอบจุดศูนย์กลางเมื่อ mirrored ทำให้ลำดับแถบสีสลับด้านให้เห็นชัด
+        canvas.save();
+        if (mirrored) canvas.scale(-1f, 1f, cx, cy);
 
         float corner = bodyH / 2f;
         canvas.drawRoundRect(res, corner, corner, resistorBodyPaint);
         canvas.drawRoundRect(res, corner, corner, resistorBorderPaint);
 
-        int[] bandColors = {Color.parseColor("#212121"), Color.parseColor("#8B4513"), Color.parseColor("#D4AF37")};
-        float bandW = res.width() * 0.07f;
-        float[] fractions = {0.28f, 0.45f, 0.62f};
+        int[] bandColors = {Color.parseColor("#1A1A1A"), Color.parseColor("#C62828"), Color.parseColor("#D4AF37")};
+        float bandW = res.width() * 0.085f;
+        float[] fractions = {0.22f, 0.43f, 0.64f};
         for (int i = 0; i < bandColors.length; i++) {
             float bx = res.left + res.width() * fractions[i];
             resistorBandPaint.setColor(bandColors[i]);
             canvas.drawRect(bx, res.top + 2f, bx + bandW, res.bottom - 2f, resistorBandPaint);
         }
+
+        canvas.restore();
     }
 
-    private void drawLedIcon(Canvas canvas, RectF body, boolean lit, int ledColor) {
+    private void drawLedIcon(Canvas canvas, RectF body, boolean lit, int ledColor, boolean mirrored,
+                             float leftHoleX, float rightHoleX, float holeY) {
         float cx = body.centerX();
-        float cy = body.centerY() - body.height() * 0.06f;
-        float r = body.height() * 0.24f;
-        float leadPad = body.width() * 0.10f;
+        float domeTopY = body.centerY() - body.height() * 0.30f;
+        float flatY = body.centerY() + body.height() * 0.02f;
+        float r = body.height() * 0.26f;
+
+        // ขา LED ยึดตำแหน่งรูบอร์ดจริงเสมอ ไม่ขึ้นกับการพลิก
+        float legXLeft = cx - r * 0.55f;
+        float legXRight = cx + r * 0.55f;
+        float bendY = flatY + body.height() * 0.22f;
+
+        canvas.drawLine(legXLeft, flatY, legXLeft, bendY, leadPaint);
+        canvas.drawLine(legXLeft, bendY, leftHoleX, holeY, leadPaint);
+        canvas.drawCircle(leftHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        canvas.drawLine(legXRight, flatY, legXRight, bendY, leadPaint);
+        canvas.drawLine(legXRight, bendY, rightHoleX, holeY, leadPaint);
+        canvas.drawCircle(rightHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        // โดม LED + จุดไฮไลต์: พลิกรอบจุดศูนย์กลางเมื่อ mirrored ทำให้จุดไฮไลต์สลับด้านให้เห็นชัด
+        canvas.save();
+        if (mirrored) canvas.scale(-1f, 1f, cx, body.centerY());
 
         if (lit) {
+            float glowCy = (domeTopY + flatY) / 2f;
             for (int i = 3; i >= 1; i--) {
                 ledGlowPaint.setColor(ledColor);
                 ledGlowPaint.setAlpha(40 / i);
-                canvas.drawCircle(cx, cy, r * (1f + i * 0.55f), ledGlowPaint);
+                canvas.drawCircle(cx, glowCy, r * (1f + i * 0.55f), ledGlowPaint);
             }
             ledBodyPaint.setColor(ledColor);
         } else {
             ledBodyPaint.setColor(darkenColor(ledColor, 0.45f));
         }
 
-        canvas.drawCircle(cx, cy, r, ledBodyPaint);
-        canvas.drawCircle(cx, cy, r, ledBorderPaint);
-        canvas.drawCircle(cx - r * 0.35f, cy - r * 0.35f, r * 0.32f, ledHighlightPaint);
+        Path dome = new Path();
+        RectF domeRect = new RectF(cx - r, domeTopY - r, cx + r, domeTopY + r);
+        dome.addArc(domeRect, 180f, 180f);
+        dome.lineTo(cx + r, flatY);
+        dome.lineTo(cx - r, flatY);
+        dome.close();
 
-        float legY1 = cy + r * 0.7f;
-        float legY2 = body.centerY() + body.height() * 0.34f;
-        float legXLeft = cx - r * 0.5f;
-        float legXRight = cx + r * 0.5f;
+        canvas.drawPath(dome, ledBodyPaint);
+        canvas.drawPath(dome, ledBorderPaint);
+        canvas.drawCircle(cx - r * 0.35f, domeTopY - r * 0.25f, r * 0.30f, ledHighlightPaint);
 
-        canvas.drawLine(legXLeft, legY1, legXLeft, legY2, leadPaint);
-        canvas.drawLine(legXLeft, legY2, body.left + leadPad, legY2, leadPaint);
-
-        canvas.drawLine(legXRight, legY1, legXRight, legY2, leadPaint);
-        canvas.drawLine(legXRight, legY2, body.right - leadPad, legY2, leadPaint);
+        canvas.restore();
     }
 
     private int darkenColor(int color, float factor) {
@@ -720,14 +972,13 @@ public class CircuitCanvasView extends View {
         return Color.argb(a, r, g, b);
     }
 
-    private void drawButtonIcon(Canvas canvas, RectF body) {
+    private void drawButtonIcon(Canvas canvas, RectF body, boolean pressed, float leftHoleX, float rightHoleX, float holeY) {
         float cx = body.centerX();
         float cy = body.centerY();
-        float capSize = body.height() * 0.52f;
-        float leadPad = body.width() * 0.10f;
+        float capSize = body.height() * 0.58f;
 
-        float legOffset = capSize / 2f + 3f * zoomedScale();
-        float legSize = Math.max(3f, capSize * 0.14f);
+        float legOffset = capSize / 2f + 5f * zoomedScale();
+        float legSize = Math.max(3.4f, capSize * 0.16f);
         float[][] legPositions = {
                 {-legOffset, -legOffset}, {legOffset, -legOffset},
                 {-legOffset, legOffset}, {legOffset, legOffset}
@@ -737,38 +988,155 @@ public class CircuitCanvasView extends View {
                     cx + pos[0] + legSize / 2f, cy + pos[1] + legSize / 2f, buttonLegPaint);
         }
 
-        canvas.drawLine(body.left + leadPad, cy + legOffset, cx - legOffset, cy + legOffset, leadPaint);
-        canvas.drawLine(cx + legOffset, cy + legOffset, body.right - leadPad, cy + legOffset, leadPaint);
+        float bendY = cy + legOffset;
+        canvas.drawLine(cx - legOffset, bendY, cx - legOffset * 0.3f, bendY, leadPaint);
+        canvas.drawLine(cx - legOffset * 0.3f, bendY, leftHoleX, holeY, leadPaint);
+        canvas.drawCircle(leftHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
 
-        RectF cap = new RectF(cx - capSize / 2f, cy - capSize / 2f, cx + capSize / 2f, cy + capSize / 2f);
-        canvas.drawRoundRect(cap, 6f, 6f, buttonCapPaint);
-        canvas.drawRoundRect(cap, 6f, 6f, buttonCapBorderPaint);
-        canvas.drawCircle(cx, cy, capSize * 0.22f, buttonCenterPaint);
+        canvas.drawLine(cx + legOffset, bendY, cx + legOffset * 0.3f, bendY, leadPaint);
+        canvas.drawLine(cx + legOffset * 0.3f, bendY, rightHoleX, holeY, leadPaint);
+        canvas.drawCircle(rightHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        // ปุ่มที่ "กด" อยู่: ฝาปุ่มยุบลงเล็กน้อย + มีวงแหวนเรืองแสงสีเขียวรอบปุ่ม + จุดกลางเปลี่ยนเป็นสีเขียว
+        if (pressed) {
+            buttonPressedGlowPaint.setAlpha(70);
+            canvas.drawCircle(cx, cy, capSize * 0.85f, buttonPressedGlowPaint);
+        }
+
+        float capScale = pressed ? 0.88f : 1f;
+        RectF cap = new RectF(cx - capSize * capScale / 2f, cy - capSize * capScale / 2f,
+                cx + capSize * capScale / 2f, cy + capSize * capScale / 2f);
+        canvas.drawRoundRect(cap, 8f, 8f, pressed ? buttonCapPressedPaint : buttonCapPaint);
+        canvas.drawRoundRect(cap, 8f, 8f, buttonCapBorderPaint);
+        canvas.drawCircle(cx, cy, capSize * 0.24f, pressed ? buttonPressedCenterPaint : buttonCenterPaint);
     }
 
-    private void drawBatteryIcon(Canvas canvas, RectF body, double voltage) {
-        float clipW = body.width() * 0.16f;
-        RectF clip = new RectF(body.left, body.top + body.height() * 0.12f, body.left + clipW, body.bottom - body.height() * 0.12f);
-        RectF box = new RectF(clip.right - 2f, body.top + body.height() * 0.06f, body.right - body.width() * 0.04f, body.bottom - body.height() * 0.06f);
+    private void drawCapacitorIcon(Canvas canvas, RectF body, float leftHoleX, float rightHoleX, float holeY) {
+        float cx = body.centerX();
+        float cy = body.centerY();
+        float r = body.height() * 0.30f;
+        float domeTopY = cy - body.height() * 0.20f;
+        float flatY = cy + r * 0.55f;
 
-        canvas.drawRoundRect(box, 6f, 6f, batteryBoxPaint);
-        canvas.drawRoundRect(box, 6f, 6f, batteryBoxBorderPaint);
-        canvas.drawRect(clip, batteryClipPaint);
+        // ขาตัวเก็บประจุ ยึดตำแหน่งรูบอร์ดจริงเสมอ
+        canvas.drawLine(leftHoleX, holeY, cx - r * 0.5f, flatY, leadPaint);
+        canvas.drawCircle(leftHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
 
-        float termR = Math.max(2.5f, clipW * 0.22f);
-        canvas.drawCircle(clip.centerX(), clip.top + clip.height() * 0.28f, termR, batteryTerminalNegPaint);
-        canvas.drawCircle(clip.centerX(), clip.bottom - clip.height() * 0.28f, termR, batteryTerminalPosPaint);
+        canvas.drawLine(rightHoleX, holeY, cx + r * 0.5f, flatY, leadPaint);
+        canvas.drawCircle(rightHoleX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
 
-        String voltageText = (voltage == Math.rint(voltage) ? String.valueOf((long) voltage) : String.valueOf(voltage)) + "V";
-        batteryTextPaint.setTextSize(Math.max(12f, box.height() * 0.30f));
-        canvas.drawText(voltageText, box.centerX(), box.centerY() + batteryTextPaint.getTextSize() * 0.32f, batteryTextPaint);
+        // ตัวถังทรงโดมสีฟ้า (ตัวเก็บประจุชนิดอิเล็กโทรไลต์ ตามรูปอ้างอิง)
+        Path dome = new Path();
+        RectF domeRect = new RectF(cx - r, domeTopY - r, cx + r, domeTopY + r);
+        dome.addArc(domeRect, 180f, 180f);
+        dome.lineTo(cx + r, flatY);
+        dome.lineTo(cx - r, flatY);
+        dome.close();
 
-        float leadPad = body.width() * 0.03f;
-        canvas.drawLine(body.left + leadPad, clip.top - 3f * zoomedScale(), clip.centerX(), clip.top - 3f * zoomedScale(), leadPaint);
-        canvas.drawLine(clip.centerX(), clip.top - 3f * zoomedScale(), clip.centerX(), clip.top + 2f, leadPaint);
+        canvas.drawPath(dome, capacitorBodyPaint);
+        canvas.drawPath(dome, capacitorBorderPaint);
+        canvas.drawCircle(cx - r * 0.35f, domeTopY - r * 0.25f, r * 0.28f, capacitorHighlightPaint);
+    }
 
-        canvas.drawLine(box.right, body.top + body.height() * 0.02f, body.right - leadPad, body.top + body.height() * 0.02f, leadPaint);
-        canvas.drawLine(box.centerX(), box.top, box.centerX(), body.top + body.height() * 0.02f, leadPaint);
+    private void drawSlideSwitchIcon(Canvas canvas, RectF body, boolean slideToB,
+                                     float legAX, float legCX, float legBX, float holeY) {
+        float cx = body.centerX();
+        float cy = body.centerY();
+        float caseW = body.width() * 0.66f;
+        float caseH = body.height() * 0.46f;
+        RectF switchCase = new RectF(cx - caseW / 2f, cy - caseH / 2f, cx + caseW / 2f, cy + caseH / 2f);
+
+        // ขาทั้ง 3 ขา (A, ขั้วร่วม, B) ยึดตำแหน่งรูบอร์ดจริงเสมอ
+        canvas.drawLine(legAX, holeY, switchCase.left + caseW * 0.16f, switchCase.bottom, leadPaint);
+        canvas.drawCircle(legAX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        canvas.drawLine(legCX, holeY, legCX, switchCase.bottom, leadPaint);
+        canvas.drawCircle(legCX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        canvas.drawLine(legBX, holeY, switchCase.right - caseW * 0.16f, switchCase.bottom, leadPaint);
+        canvas.drawCircle(legBX, holeY, leadPaint.getStrokeWidth() * 0.55f, leadPaint);
+
+        // ตัวเรือนสวิตช์สีดำ
+        canvas.drawRoundRect(switchCase, 6f, 6f, slideSwitchBodyPaint);
+        canvas.drawRoundRect(switchCase, 6f, 6f, slideSwitchBorderPaint);
+
+        // แกนเลื่อนสีขาว แสดงตำแหน่งปัจจุบัน (ซ้าย = เลื่อนไปทาง A, ขวา = เลื่อนไปทาง B)
+        float knobW = caseW * 0.40f;
+        float knobH = caseH * 0.70f;
+        float knobCx = slideToB ? switchCase.right - knobW * 0.65f : switchCase.left + knobW * 0.65f;
+        RectF knob = new RectF(knobCx - knobW / 2f, cy - knobH / 2f, knobCx + knobW / 2f, cy + knobH / 2f);
+        canvas.drawRoundRect(knob, 3f, 3f, slideSwitchKnobPaint);
+        canvas.drawRoundRect(knob, 3f, 3f, slideSwitchKnobBorderPaint);
+    }
+
+    private void drawBatteryIcon(Canvas canvas, RectF body, double voltage, boolean mirrored,
+                                 float leftHoleX, float rightHoleX, float holeY) {
+        float bw = body.width();
+        float bh = body.height();
+        float cx = body.centerX();
+        float cy = body.centerY();
+
+        // ตัวแบตทรงแคปซูลแนวนอน แบ่งครึ่งเหลือง (+) และครึ่งกรมท่า (−) ตามภาพอ้างอิง
+        float capsuleW = bw * 0.80f;
+        float capsuleH = bh * 0.62f;
+        RectF capsule = new RectF(cx - capsuleW / 2f, cy - capsuleH / 2f, cx + capsuleW / 2f, cy + capsuleH / 2f);
+        float cornerR = capsuleH / 2f;
+
+        Path capsulePath = new Path();
+        capsulePath.addRoundRect(capsule, cornerR, cornerR, Path.Direction.CW);
+
+        boolean posOnLeft = !mirrored;
+        int yellow = Color.parseColor("#F2C230");
+        int navy = Color.parseColor("#2B2560");
+
+        canvas.save();
+        canvas.clipPath(capsulePath);
+        batteryClipPaint.setColor(posOnLeft ? yellow : navy);
+        canvas.drawRect(capsule.left, capsule.top, capsule.centerX(), capsule.bottom, batteryClipPaint);
+        batteryBoxPaint.setColor(posOnLeft ? navy : yellow);
+        canvas.drawRect(capsule.centerX(), capsule.top, capsule.right, capsule.bottom, batteryBoxPaint);
+        canvas.restore();
+
+        batteryBoxBorderPaint.setColor(Color.parseColor("#141414"));
+        canvas.drawPath(capsulePath, batteryBoxBorderPaint);
+        canvas.drawLine(capsule.centerX(), capsule.top, capsule.centerX(), capsule.bottom, batteryBoxBorderPaint);
+
+        // หมวกขั้วบวก (ปุ่มนูนทรงรีสีครีม) ที่ปลายด้านขั้วบวก เหมือนภาพอ้างอิง
+        float capR = capsuleH * 0.30f;
+        float capCx = posOnLeft ? capsule.left + capR * 0.9f : capsule.right - capR * 0.9f;
+        RectF capOval = new RectF(capCx - capR * 0.62f, cy - capR, capCx + capR * 0.62f, cy + capR);
+        batteryTerminalPosPaint.setColor(Color.parseColor("#F5F3E6"));
+        canvas.drawOval(capOval, batteryTerminalPosPaint);
+        canvas.drawOval(capOval, batteryBoxBorderPaint);
+
+        // สัญลักษณ์ + / − บนตัวแบต
+        float symSize = Math.max(13f, capsuleH * 0.36f);
+        batteryTextPaint.setTextSize(symSize);
+        batteryTextPaint.setColor(Color.parseColor("#1A1A1A"));
+        float plusX = posOnLeft ? capsule.left + capsule.width() * 0.28f : capsule.right - capsule.width() * 0.28f;
+        canvas.drawText("+", plusX, cy + symSize * 0.34f, batteryTextPaint);
+
+        batteryPolarityPaint.setTextAlign(Paint.Align.CENTER);
+        batteryPolarityPaint.setTextSize(symSize);
+        batteryPolarityPaint.setColor(Color.parseColor("#F0F0F5"));
+        float minusX = posOnLeft ? capsule.right - capsule.width() * 0.28f : capsule.left + capsule.width() * 0.28f;
+        canvas.drawText("−", minusX, cy + symSize * 0.34f, batteryPolarityPaint);
+
+        // สายไฟจากปลายแบตทั้งสองด้านไปยังรูบอร์ด (ขั้วไหนอยู่ด้านไหน อิงตาม mirrored)
+        float wireW = Math.max(3f, 4.2f * zoomedScale());
+        batteryWireNegPaint.setStrokeWidth(wireW);
+        batteryWirePosPaint.setStrokeWidth(wireW);
+
+        float posEndX = posOnLeft ? capsule.left : capsule.right;
+        float negEndX = posOnLeft ? capsule.right : capsule.left;
+        float posHoleX = posOnLeft ? leftHoleX : rightHoleX;
+        float negHoleX = posOnLeft ? rightHoleX : leftHoleX;
+
+        canvas.drawLine(posEndX, cy, posHoleX, holeY, batteryWirePosPaint);
+        canvas.drawCircle(posHoleX, holeY, wireW * 0.65f, batteryWirePosPaint);
+
+        canvas.drawLine(negEndX, cy, negHoleX, holeY, batteryWireNegPaint);
+        canvas.drawCircle(negHoleX, holeY, wireW * 0.65f, batteryWireNegPaint);
     }
 
     private void drawBreadboardIcon(Canvas canvas, RectF body) {
@@ -794,13 +1162,17 @@ public class CircuitCanvasView extends View {
             float[] pb = terminalScreenPoint(c.getTo());
             if (pa == null || pb == null) continue;
 
-            wirePaint.setColor(c.color);
-
             Path path = buildWirePath(pa, pb);
+
+            if (selectedWire != null && selectedWire.equals(c)) {
+                canvas.drawPath(path, wireSelectedGlowPaint);
+            }
+
+            wirePaint.setColor(c.color);
             canvas.drawPath(path, wireShadowPaint);
             canvas.drawPath(path, wirePaint);
-            canvas.drawCircle(pa[0], pa[1], 5.5f * zoomedScale(), terminalDotPaint);
-            canvas.drawCircle(pb[0], pb[1], 5.5f * zoomedScale(), terminalDotPaint);
+            canvas.drawCircle(pa[0], pa[1], 8f * zoomedScale(), terminalDotPaint);
+            canvas.drawCircle(pb[0], pb[1], 8f * zoomedScale(), terminalDotPaint);
         }
     }
 
@@ -822,9 +1194,45 @@ public class CircuitCanvasView extends View {
         canvas.drawLine(p[0], p[1], dragX, dragY, wirePreviewPaint);
     }
 
+    private void drawComponentMovePreview(Canvas canvas) {
+        if (!draggingComponent || !movedBeyondSlop || selectedId == null || model == null) return;
+        PlacedComponent sel = model.findComponentById(selectedId);
+        if (sel == null) return;
+
+        float wx = worldX(dragX);
+        float wy = worldY(dragY);
+
+        float px, py;
+        if (isInsideBoard(wx, wy)) {
+            int[] hole = BreadboardGrid.nearestHole(wx, wy);
+            px = screenX(BreadboardGrid.xFor(hole[1]));
+            py = screenY(BreadboardGrid.yFor(hole[0]));
+        } else {
+            px = dragX;
+            py = dragY;
+        }
+
+        boolean vertical = !sel.freePlaced && sel.vertical;
+        RectF ghost;
+        if (vertical) {
+            ghost = new RectF(
+                    px - BODY_PAD_Y * zoomedScale(),
+                    py - (BODY_PAD_X + 10f) * zoomedScale(),
+                    px + BODY_PAD_Y * zoomedScale(),
+                    py + (BODY_PAD_X + 10f) * zoomedScale());
+        } else {
+            ghost = new RectF(
+                    px - (BODY_PAD_X + 10f) * zoomedScale(),
+                    py - BODY_PAD_Y * zoomedScale(),
+                    px + (BODY_PAD_X + 10f) * zoomedScale(),
+                    py + BODY_PAD_Y * zoomedScale());
+        }
+        canvas.drawRoundRect(ghost, 14f, 14f, componentMovePreviewPaint);
+    }
+
     private void drawWireColorButton(Canvas canvas) {
         float density = getResources().getDisplayMetrics().density;
-        wireBtnR = 26f * density;
+        wireBtnR = 32f * density;
         wireBtnCx = getWidth() - wireBtnR - 18f * density;
         wireBtnCy = wireBtnR + 18f * density;
 
@@ -832,7 +1240,7 @@ public class CircuitCanvasView extends View {
         canvas.drawCircle(wireBtnCx, wireBtnCy, wireBtnR, wireColorButtonPaint);
         canvas.drawCircle(wireBtnCx, wireBtnCy, wireBtnR, wireColorButtonBorderPaint);
 
-        float textY = wireBtnCy + 5f * density;
+        float textY = wireBtnCy + 6f * density;
         canvas.drawText("ปรับสีสายไฟ", wireBtnCx, textY, wireColorButtonOutlinePaint);
         canvas.drawText("ปรับสีสายไฟ", wireBtnCx, textY, wireColorButtonLabelPaint);
     }
@@ -847,6 +1255,14 @@ public class CircuitCanvasView extends View {
         invalidate();
     }
 
+    private float allocateButtonSlotCenterY(float r) {
+        float density = getResources().getDisplayMetrics().density;
+        float cy = wireBtnCy + wireBtnR + density * 16f + r
+                + buttonStackIndex * (2f * r + density * 16f);
+        buttonStackIndex++;
+        return cy;
+    }
+
     private boolean isPropButtonVisible() {
         if (selectedId == null || model == null) return false;
         PlacedComponent pc = model.findComponentById(selectedId);
@@ -859,14 +1275,14 @@ public class CircuitCanvasView extends View {
         if (!isPropButtonVisible()) return;
 
         float density = getResources().getDisplayMetrics().density;
-        propBtnR = 26f * density;
+        propBtnR = 32f * density;
         propBtnCx = getWidth() - propBtnR - 18f * density;
-        propBtnCy = wireBtnCy + wireBtnR + 16f * density + propBtnR;
+        propBtnCy = allocateButtonSlotCenterY(propBtnR);
 
         canvas.drawCircle(propBtnCx, propBtnCy, propBtnR, propButtonPaint);
         canvas.drawCircle(propBtnCx, propBtnCy, propBtnR, propButtonBorderPaint);
 
-        float textY = propBtnCy + 5f * density;
+        float textY = propBtnCy + 6f * density;
         canvas.drawText("ปรับค่า", propBtnCx, textY, propButtonOutlinePaint);
         canvas.drawText("ปรับค่า", propBtnCx, textY, propButtonLabelPaint);
     }
@@ -891,6 +1307,161 @@ public class CircuitCanvasView extends View {
         }
     }
 
+    private boolean isFlipButtonVisible() {
+        if (selectedId == null || model == null) return false;
+        PlacedComponent pc = model.findComponentById(selectedId);
+        return pc != null && !pc.freePlaced;
+    }
+
+    private void drawFlipButton(Canvas canvas) {
+        if (!isFlipButtonVisible()) return;
+
+        float density = getResources().getDisplayMetrics().density;
+        flipBtnR = 32f * density;
+        flipBtnCx = getWidth() - flipBtnR - 18f * density;
+        flipBtnCy = allocateButtonSlotCenterY(flipBtnR);
+
+        canvas.drawCircle(flipBtnCx, flipBtnCy, flipBtnR, flipButtonPaint);
+        canvas.drawCircle(flipBtnCx, flipBtnCy, flipBtnR, flipButtonBorderPaint);
+
+        float textY = flipBtnCy + 6f * density;
+        canvas.drawText("พลิก", flipBtnCx, textY, flipButtonOutlinePaint);
+        canvas.drawText("พลิก", flipBtnCx, textY, flipButtonLabelPaint);
+    }
+
+    private boolean isInsideFlipButton(float sx, float sy) {
+        if (!isFlipButtonVisible()) return false;
+        return Math.hypot(sx - flipBtnCx, sy - flipBtnCy) <= flipBtnR;
+    }
+
+    private void handleFlipButtonTap() {
+        if (selectedId == null || model == null) return;
+        PlacedComponent pc = model.findComponentById(selectedId);
+        if (pc == null || pc.freePlaced) return;
+
+        listener.onBeforeChange();
+        if (pc.vertical) {
+            int tmp = pc.row;
+            pc.row = pc.rowB;
+            pc.rowB = tmp;
+        } else {
+            int tmp = pc.colA;
+            pc.colA = pc.colB;
+            pc.colB = tmp;
+        }
+        listener.onCircuitChanged();
+        invalidate();
+    }
+
+    private boolean isRotateButtonVisible() {
+        if (selectedId == null || model == null) return false;
+        PlacedComponent pc = model.findComponentById(selectedId);
+        return pc != null && !pc.freePlaced;
+    }
+
+    private void drawRotateButton(Canvas canvas) {
+        if (!isRotateButtonVisible()) return;
+
+        float density = getResources().getDisplayMetrics().density;
+        rotateBtnR = 32f * density;
+        rotateBtnCx = getWidth() - rotateBtnR - 18f * density;
+        rotateBtnCy = allocateButtonSlotCenterY(rotateBtnR);
+
+        canvas.drawCircle(rotateBtnCx, rotateBtnCy, rotateBtnR, rotateButtonPaint);
+        canvas.drawCircle(rotateBtnCx, rotateBtnCy, rotateBtnR, rotateButtonBorderPaint);
+
+        float textY = rotateBtnCy + 6f * density;
+        canvas.drawText("หมุน", rotateBtnCx, textY, rotateButtonOutlinePaint);
+        canvas.drawText("หมุน", rotateBtnCx, textY, rotateButtonLabelPaint);
+    }
+
+    private boolean isInsideRotateButton(float sx, float sy) {
+        if (!isRotateButtonVisible()) return false;
+        return Math.hypot(sx - rotateBtnCx, sy - rotateBtnCy) <= rotateBtnR;
+    }
+
+    private void handleRotateButtonTap() {
+        if (selectedId == null || model == null) return;
+        listener.onBeforeChange();
+        model.rotateOrientation(selectedId);
+        listener.onCircuitChanged();
+        invalidate();
+    }
+
+    private boolean isDeleteWireButtonVisible() {
+        return selectedWire != null;
+    }
+
+    private void drawDeleteWireButton(Canvas canvas) {
+        if (!isDeleteWireButtonVisible()) return;
+
+        float density = getResources().getDisplayMetrics().density;
+        deleteBtnR = 32f * density;
+        deleteBtnCx = getWidth() - deleteBtnR - 18f * density;
+        deleteBtnCy = allocateButtonSlotCenterY(deleteBtnR);
+
+        canvas.drawCircle(deleteBtnCx, deleteBtnCy, deleteBtnR, deleteWireButtonPaint);
+        canvas.drawCircle(deleteBtnCx, deleteBtnCy, deleteBtnR, deleteWireButtonBorderPaint);
+
+        float textY = deleteBtnCy + 6f * density;
+        canvas.drawText("ลบสาย", deleteBtnCx, textY, deleteWireButtonOutlinePaint);
+        canvas.drawText("ลบสาย", deleteBtnCx, textY, deleteWireButtonLabelPaint);
+    }
+
+    private boolean isInsideDeleteWireButton(float sx, float sy) {
+        if (!isDeleteWireButtonVisible()) return false;
+        return Math.hypot(sx - deleteBtnCx, sy - deleteBtnCy) <= deleteBtnR;
+    }
+
+    private void handleDeleteWireButtonTap() {
+        if (selectedWire == null) return;
+        listener.onBeforeChange();
+        model.getConnections().remove(selectedWire);
+        listener.onCircuitChanged();
+        selectedWire = null;
+        invalidate();
+    }
+
+    private RectF componentBodyRectScreen(PlacedComponent pc) {
+        float p1x, p1y, p2x, p2y;
+        if (pc.freePlaced) {
+            float halfSpan = halfSpanFor(pc);
+            p1x = screenX(pc.freeX - halfSpan);
+            p1y = screenY(pc.freeY);
+            p2x = screenX(pc.freeX + halfSpan);
+            p2y = p1y;
+        } else if (pc.vertical) {
+            p1x = screenX(BreadboardGrid.xFor(pc.colA));
+            p1y = screenY(BreadboardGrid.yFor(pc.row));
+            p2x = p1x;
+            p2y = screenY(BreadboardGrid.yFor(pc.rowB));
+        } else {
+            p1x = screenX(BreadboardGrid.xFor(pc.colA));
+            p1y = screenY(BreadboardGrid.yFor(pc.row));
+            p2x = screenX(BreadboardGrid.xFor(pc.colB));
+            p2y = p1y;
+        }
+
+        boolean vertical = !pc.freePlaced && pc.vertical;
+        float cx = (p1x + p2x) / 2f;
+        float cy = (p1y + p2y) / 2f;
+        float halfLen = Math.max(Math.abs(p2x - p1x), Math.abs(p2y - p1y)) / 2f;
+
+        if (vertical) {
+            float left = cx - BODY_PAD_Y * zoomedScale();
+            float right = cx + BODY_PAD_Y * zoomedScale();
+            float top = cy - (halfLen + BODY_PAD_X * zoomedScale());
+            float bottom = cy + (halfLen + BODY_PAD_X * zoomedScale());
+            return new RectF(left, top, right, bottom);
+        } else {
+            float left = cx - (halfLen + BODY_PAD_X * zoomedScale());
+            float right = cx + (halfLen + BODY_PAD_X * zoomedScale());
+            float top = cy - BODY_PAD_Y * zoomedScale();
+            float bottom = cy + BODY_PAD_Y * zoomedScale();
+            return new RectF(left, top, right, bottom);
+        }
+    }
+
     private float[] terminalScreenPoint(TerminalRef ref) {
         if (ref.isHole) {
             return new float[]{screenX(BreadboardGrid.xFor(ref.holeCol)), screenY(BreadboardGrid.yFor(ref.holeRow))};
@@ -898,11 +1469,28 @@ public class CircuitCanvasView extends View {
         PlacedComponent pc = model.findComponentById(ref.componentId);
         if (pc == null) return null;
         if (pc.freePlaced) {
-            float halfSpan = (BreadboardGrid.CELL * PlacedComponent.SPAN_COLUMNS) / 2f;
+            float halfSpan = halfSpanFor(pc);
+            if (ref.terminalIndex == 2) {
+                return new float[]{screenX(pc.freeX), screenY(pc.freeY)};
+            }
             float tx = ref.isA ? pc.freeX - halfSpan : pc.freeX + halfSpan;
             return new float[]{screenX(tx), screenY(pc.freeY)};
         }
-        int col = ref.isA ? pc.colA : pc.colB;
+        if (pc.vertical) {
+            int row;
+            if (ref.terminalIndex == 2) {
+                row = (pc.row + pc.rowB) / 2;
+            } else {
+                row = ref.isA ? pc.row : pc.rowB;
+            }
+            return new float[]{screenX(BreadboardGrid.xFor(pc.colA)), screenY(BreadboardGrid.yFor(row))};
+        }
+        int col;
+        if (ref.terminalIndex == 2) {
+            col = (pc.colA + pc.colB) / 2;
+        } else {
+            col = ref.isA ? pc.colA : pc.colB;
+        }
         return new float[]{screenX(BreadboardGrid.xFor(col)), screenY(BreadboardGrid.yFor(pc.row))};
     }
 
@@ -913,10 +1501,14 @@ public class CircuitCanvasView extends View {
         for (PlacedComponent pc : model.getComponents()) {
             float ax, ay, bx, by;
             if (pc.freePlaced) {
-                float halfSpan = (BreadboardGrid.CELL * PlacedComponent.SPAN_COLUMNS) / 2f;
+                float halfSpan = halfSpanFor(pc);
                 ay = by = pc.freeY;
                 ax = pc.freeX - halfSpan;
                 bx = pc.freeX + halfSpan;
+            } else if (pc.vertical) {
+                ax = bx = BreadboardGrid.xFor(pc.colA);
+                ay = BreadboardGrid.yFor(pc.row);
+                by = BreadboardGrid.yFor(pc.rowB);
             } else {
                 ay = by = BreadboardGrid.yFor(pc.row);
                 ax = BreadboardGrid.xFor(pc.colA);
@@ -933,6 +1525,25 @@ public class CircuitCanvasView extends View {
             if (db <= TERMINAL_HIT_RADIUS && db < bestDist) {
                 bestDist = db;
                 best = new TerminalRef(pc.id, false);
+            }
+
+            if (pc.typeId == ComponentType.SLIDESWITCH) {
+                float cx, cy;
+                if (pc.freePlaced) {
+                    cx = pc.freeX;
+                    cy = pc.freeY;
+                } else if (pc.vertical) {
+                    cx = BreadboardGrid.xFor(pc.colA);
+                    cy = BreadboardGrid.yFor((pc.row + pc.rowB) / 2);
+                } else {
+                    cx = BreadboardGrid.xFor((pc.colA + pc.colB) / 2);
+                    cy = BreadboardGrid.yFor(pc.row);
+                }
+                double dc = Math.hypot(wx - cx, wy - cy);
+                if (dc <= TERMINAL_HIT_RADIUS && dc < bestDist) {
+                    bestDist = dc;
+                    best = new TerminalRef(pc.id, 2);
+                }
             }
         }
         return best;
@@ -966,6 +1577,33 @@ public class CircuitCanvasView extends View {
         return findHoleNear(wx, wy);
     }
 
+    private Connection findWireNear(float sx, float sy) {
+        Connection best = null;
+        double bestDist = Double.MAX_VALUE;
+        float hitRadius = WIRE_HIT_RADIUS * zoomedScale();
+
+        for (Connection c : model.getConnections()) {
+            float[] pa = terminalScreenPoint(c.getFrom());
+            float[] pb = terminalScreenPoint(c.getTo());
+            if (pa == null || pb == null) continue;
+
+            Path path = buildWirePath(pa, pb);
+            PathMeasure pm = new PathMeasure(path, false);
+            float len = pm.getLength();
+            float[] pos = new float[2];
+            int steps = 24;
+            for (int i = 0; i <= steps; i++) {
+                pm.getPosTan(len * i / steps, pos, null);
+                double d = Math.hypot(sx - pos[0], sy - pos[1]);
+                if (d <= hitRadius && d < bestDist) {
+                    bestDist = d;
+                    best = c;
+                }
+            }
+        }
+        return best;
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (model == null) return true;
@@ -976,9 +1614,14 @@ public class CircuitCanvasView extends View {
         if (event.getPointerCount() >= 2) {
             if (!multiTouchActive) {
                 downTerminal = null;
+                downWire = null;
+                draggingComponent = false;
                 movedBeyondSlop = false;
                 pendingWireColorButtonPress = false;
                 pendingPropButtonPress = false;
+                pendingDeleteWireButtonPress = false;
+                pendingFlipButtonPress = false;
+                pendingRotateButtonPress = false;
             }
             multiTouchActive = true;
             handlePan(event);
@@ -1004,6 +1647,21 @@ public class CircuitCanvasView extends View {
 
             if (isInsidePropButton(x, y)) {
                 pendingPropButtonPress = true;
+                return true;
+            }
+
+            if (isInsideFlipButton(x, y)) {
+                pendingFlipButtonPress = true;
+                return true;
+            }
+
+            if (isInsideRotateButton(x, y)) {
+                pendingRotateButtonPress = true;
+                return true;
+            }
+
+            if (isInsideDeleteWireButton(x, y)) {
+                pendingDeleteWireButtonPress = true;
                 return true;
             }
         }
@@ -1041,6 +1699,45 @@ public class CircuitCanvasView extends View {
             return true;
         }
 
+        if (pendingFlipButtonPress) {
+            if (action == MotionEvent.ACTION_UP) {
+                if (isInsideFlipButton(x, y)) {
+                    handleFlipButtonTap();
+                }
+                pendingFlipButtonPress = false;
+                invalidate();
+            } else if (action == MotionEvent.ACTION_CANCEL) {
+                pendingFlipButtonPress = false;
+            }
+            return true;
+        }
+
+        if (pendingRotateButtonPress) {
+            if (action == MotionEvent.ACTION_UP) {
+                if (isInsideRotateButton(x, y)) {
+                    handleRotateButtonTap();
+                }
+                pendingRotateButtonPress = false;
+                invalidate();
+            } else if (action == MotionEvent.ACTION_CANCEL) {
+                pendingRotateButtonPress = false;
+            }
+            return true;
+        }
+
+        if (pendingDeleteWireButtonPress) {
+            if (action == MotionEvent.ACTION_UP) {
+                if (isInsideDeleteWireButton(x, y)) {
+                    handleDeleteWireButtonTap();
+                }
+                pendingDeleteWireButtonPress = false;
+                invalidate();
+            } else if (action == MotionEvent.ACTION_CANCEL) {
+                pendingDeleteWireButtonPress = false;
+            }
+            return true;
+        }
+
         switch (action) {
             case MotionEvent.ACTION_DOWN: {
                 downX = x;
@@ -1049,6 +1746,16 @@ public class CircuitCanvasView extends View {
                 dragY = y;
                 movedBeyondSlop = false;
                 downTerminal = findConnectPointNear(worldX(x), worldY(y));
+                downWire = (downTerminal == null) ? findWireNear(x, y) : null;
+
+                draggingComponent = false;
+                if (downTerminal == null && downWire == null && selectedId != null) {
+                    PlacedComponent sel = model.findComponentById(selectedId);
+                    if (sel != null && componentBodyRectScreen(sel).contains(x, y)) {
+                        draggingComponent = true;
+                    }
+                }
+
                 invalidate();
                 return true;
             }
@@ -1056,6 +1763,13 @@ public class CircuitCanvasView extends View {
                 float dx = x - downX;
                 float dy = y - downY;
                 if (Math.hypot(dx, dy) > TAP_SLOP) movedBeyondSlop = true;
+
+                if (draggingComponent && movedBeyondSlop) {
+                    dragX = x;
+                    dragY = y;
+                    invalidate();
+                    return true;
+                }
 
                 if (downTerminal != null && movedBeyondSlop) {
                     dragX = x;
@@ -1068,6 +1782,8 @@ public class CircuitCanvasView extends View {
             case MotionEvent.ACTION_CANCEL: {
                 handleRelease(x, y);
                 downTerminal = null;
+                downWire = null;
+                draggingComponent = false;
                 movedBeyondSlop = false;
                 invalidate();
                 return true;
@@ -1101,6 +1817,16 @@ public class CircuitCanvasView extends View {
         float wx = worldX(x);
         float wy = worldY(y);
 
+        if (draggingComponent) {
+            draggingComponent = false;
+            if (movedBeyondSlop) {
+                listener.onBeforeChange();
+                moveSelectedTo(wx, wy);
+                listener.onCircuitChanged();
+            }
+            return;
+        }
+
         if (downTerminal != null && movedBeyondSlop) {
             TerminalRef release = findConnectPointNear(wx, wy);
             if (release != null && !release.equals(downTerminal)) {
@@ -1111,7 +1837,17 @@ public class CircuitCanvasView extends View {
             return;
         }
 
+        if (downWire != null && !movedBeyondSlop) {
+            selectedWire = downWire;
+            if (selectedId != null) {
+                selectedId = null;
+                listener.onComponentSelected(null);
+            }
+            return;
+        }
+
         if (pendingPlacementTypeId != null) {
+            selectedWire = null;
             if (downTerminal != null && !downTerminal.isHole) {
                 pendingPlacementTypeId = null;
                 listener.onPlacementTypeConsumed();
@@ -1127,6 +1863,19 @@ public class CircuitCanvasView extends View {
         }
 
         if (downTerminal != null && !downTerminal.isHole) {
+            selectedWire = null;
+
+            PlacedComponent tapped = model.findComponentById(downTerminal.componentId);
+            if (tapped != null && tapped.typeId == ComponentType.PUSHBUTTON) {
+                listener.onBeforeChange();
+                tapped.pressed = !tapped.pressed;
+                listener.onCircuitChanged();
+            } else if (tapped != null && tapped.typeId == ComponentType.SLIDESWITCH) {
+                listener.onBeforeChange();
+                tapped.slideToB = !tapped.slideToB;
+                listener.onCircuitChanged();
+            }
+
             if (selectedId != null && selectedId == downTerminal.componentId) {
                 selectedId = null;
                 listener.onComponentSelected(null);
@@ -1143,7 +1892,10 @@ public class CircuitCanvasView extends View {
             selectedId = null;
             listener.onComponentSelected(null);
             listener.onCircuitChanged();
+            return;
         }
+
+        selectedWire = null;
     }
 
     private boolean isInsideBoard(float wx, float wy) {

@@ -174,4 +174,6 @@
     <string name="usage_history_title">ประวัติการใช้งาน</string>
     <string name="usage_history_empty">ยังไม่มีประวัติการใช้งาน</string>
     <string name="settings_faculty_name">คณะวิศวกรรมศาสตร์และเทคโนโลยีอุตสาหกรรม</string>
+    <string name="component_capacitor">ตัวเก็บประจุ</string>
+    <string name="component_slideswitch">สวิตช์เลื่อน</string>
 </resources>

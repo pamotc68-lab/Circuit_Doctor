@@ -31,9 +31,15 @@ public class CircuitDesignModel {
 
     public long addComponent(int typeId, int row, int colA) {
         long id = nextId++;
-        int colB = Math.min(colA + PlacedComponent.SPAN_COLUMNS, BreadboardGrid.COLS - 1);
+        int span = spanColumnsFor(typeId);
+        int colB = Math.min(colA + span, BreadboardGrid.COLS - 1);
         components.add(new PlacedComponent(id, typeId, row, colA, colB));
         return id;
+    }
+
+    /** จำนวนคอลัมน์ที่อุปกรณ์แต่ละประเภทกินพื้นที่บนเบรดบอร์ด (สวิตช์เลื่อนมี 3 ขา จึงกว้างกว่าอุปกรณ์ 2 ขาทั่วไป) */
+    private int spanColumnsFor(int typeId) {
+        return typeId == ComponentType.SLIDESWITCH ? PlacedComponent.SWITCH_SPAN_COLUMNS : PlacedComponent.SPAN_COLUMNS;
     }
 
     /** วางอุปกรณ์อย่างอิสระนอกเบรดบอร์ด (ไม่ยึดรู) */
@@ -47,15 +53,25 @@ public class CircuitDesignModel {
         return id;
     }
 
-    public void moveComponent(long id, int row, int newColA) {
+    public void moveComponent(long id, int row, int newCol) {
         for (PlacedComponent p : components) {
             if (p.id == id) {
-                int span = p.colB - p.colA;
-                if (span <= 0) span = PlacedComponent.SPAN_COLUMNS;
                 p.freePlaced = false;
-                p.row = row;
-                p.colA = Math.max(0, newColA);
-                p.colB = Math.min(p.colA + span, BreadboardGrid.COLS - 1);
+                if (p.vertical) {
+                    int span = p.rowB - p.row;
+                    if (span <= 0) span = spanColumnsFor(p.typeId);
+                    p.row = Math.max(0, row);
+                    p.rowB = Math.min(p.row + span, BreadboardGrid.ROWS - 1);
+                    p.colA = Math.max(0, Math.min(newCol, BreadboardGrid.COLS - 1));
+                    p.colB = p.colA;
+                } else {
+                    int span = p.colB - p.colA;
+                    if (span <= 0) span = spanColumnsFor(p.typeId);
+                    p.row = row;
+                    p.rowB = row;
+                    p.colA = Math.max(0, newCol);
+                    p.colB = Math.min(p.colA + span, BreadboardGrid.COLS - 1);
+                }
                 return;
             }
         }
@@ -70,6 +86,26 @@ public class CircuitDesignModel {
                 p.freeY = freeY;
                 return;
             }
+        }
+    }
+
+    /** สลับแนววาง (แนวนอน <-> แนวตั้ง) ของอุปกรณ์ที่วางบนบอร์ด โดยยึดตำแหน่งขา A เดิมไว้เป็นจุดหมุน */
+    public void rotateOrientation(long id) {
+        PlacedComponent p = findComponentById(id);
+        if (p == null || p.freePlaced) return;
+
+        if (p.vertical) {
+            int span = p.rowB - p.row;
+            if (span <= 0) span = spanColumnsFor(p.typeId);
+            p.vertical = false;
+            p.rowB = p.row;
+            p.colB = Math.min(p.colA + span, BreadboardGrid.COLS - 1);
+        } else {
+            int span = p.colB - p.colA;
+            if (span <= 0) span = spanColumnsFor(p.typeId);
+            p.vertical = true;
+            p.colB = p.colA;
+            p.rowB = Math.min(p.row + span, BreadboardGrid.ROWS - 1);
         }
     }
 
@@ -92,13 +128,26 @@ public class CircuitDesignModel {
         connections.add(conn);
     }
 
-    /** หาว่ารูที่แตะตรงกับขา A หรือ B ของอุปกรณ์ตัวไหนหรือไม่ (เฉพาะอุปกรณ์ที่ยึดรูบนบอร์ด) */
+    /** หาว่ารูที่แตะตรงกับขาของอุปกรณ์ตัวไหนหรือไม่ (เฉพาะอุปกรณ์ที่ยึดรูบนบอร์ด) */
     public TerminalRef findTerminalAt(int row, int col) {
         for (int i = components.size() - 1; i >= 0; i--) {
             PlacedComponent p = components.get(i);
-            if (p.freePlaced || p.row != row) continue;
-            if (p.colA == col) return new TerminalRef(p.id, true);
-            if (p.colB == col) return new TerminalRef(p.id, false);
+            if (p.freePlaced) continue;
+            if (p.vertical) {
+                if (p.colA != col) continue;
+                if (p.row == row) return new TerminalRef(p.id, true);
+                if (p.rowB == row) return new TerminalRef(p.id, false);
+                if (p.typeId == ComponentType.SLIDESWITCH && (p.row + p.rowB) / 2 == row) {
+                    return new TerminalRef(p.id, 2);
+                }
+            } else {
+                if (p.row != row) continue;
+                if (p.colA == col) return new TerminalRef(p.id, true);
+                if (p.colB == col) return new TerminalRef(p.id, false);
+                if (p.typeId == ComponentType.SLIDESWITCH && (p.colA + p.colB) / 2 == col) {
+                    return new TerminalRef(p.id, 2);
+                }
+            }
         }
         return null;
     }
@@ -166,6 +215,9 @@ public class CircuitDesignModel {
         for (PlacedComponent p : components) {
             union(parent, new TerminalRef(p.id, true), new TerminalRef(p.id, true));
             union(parent, new TerminalRef(p.id, false), new TerminalRef(p.id, false));
+            if (p.typeId == ComponentType.SLIDESWITCH) {
+                union(parent, new TerminalRef(p.id, 2), new TerminalRef(p.id, 2));
+            }
         }
 
         // สายไฟที่ผู้ใช้ลากต่อ (ขาอุปกรณ์ หรือรูเปล่า) = ความต้านทาน 0 โอห์ม รวมกลุ่มไฟฟ้าเดียวกัน
@@ -177,7 +229,16 @@ public class CircuitDesignModel {
         Map<String, TerminalRef> nodeFirstSeen = new HashMap<>();
         for (PlacedComponent p : components) {
             unionByNode(parent, nodeFirstSeen, new TerminalRef(p.id, true), p.row, p.colA);
-            unionByNode(parent, nodeFirstSeen, new TerminalRef(p.id, false), p.row, p.colB);
+            int rowB = p.vertical ? p.rowB : p.row;
+            int colB = p.vertical ? p.colA : p.colB;
+            unionByNode(parent, nodeFirstSeen, new TerminalRef(p.id, false), rowB, colB);
+
+            // ขาที่ 3 (ขั้วร่วม) ของสวิตช์เลื่อน อยู่กึ่งกลางระหว่างขา A และขา B เสมอ
+            if (p.typeId == ComponentType.SLIDESWITCH) {
+                int rowC = p.vertical ? (p.row + p.rowB) / 2 : p.row;
+                int colC = p.vertical ? p.colA : (p.colA + p.colB) / 2;
+                unionByNode(parent, nodeFirstSeen, new TerminalRef(p.id, 2), rowC, colC);
+            }
         }
         // จุดต่อที่เป็นรูเปล่าจากสายไฟก็ต้องรวมเข้ากลุ่มตามแถบบอร์ดเช่นกัน
         for (Connection c : connections) {
@@ -185,12 +246,25 @@ public class CircuitDesignModel {
             if (c.toIsHole) unionByNode(parent, nodeFirstSeen, c.getTo(), c.toRow, c.toCol);
         }
 
-        // กราฟย่อ: โหนด = กลุ่มไฟฟ้า, เส้นเชื่อม = ตัวอุปกรณ์ (resistor/LED/pushbutton) ที่คร่อมสองกลุ่มนั้น
+        // กราฟย่อ: โหนด = กลุ่มไฟฟ้า, เส้นเชื่อม = ตัวอุปกรณ์ที่คร่อมสองกลุ่มนั้น
         Map<TerminalRef, List<long[]>> graph = new HashMap<>();
         Map<Long, TerminalRef[]> edgeEndpoints = new HashMap<>();
 
         for (PlacedComponent p : components) {
             if (p.typeId == ComponentType.BATTERY_9V) continue;
+            // ปุ่มกดที่ยังไม่ถูกกด ถือว่าวงจรขาด ไม่สร้างเส้นเชื่อมระหว่างสองกลุ่มไฟฟ้า
+            if (p.typeId == ComponentType.PUSHBUTTON && !p.pressed) continue;
+
+            if (p.typeId == ComponentType.SLIDESWITCH) {
+                // สวิตช์เลื่อน 3 ทาง: ขั้วร่วม (ขา C) ต่อวงจรกับขาที่เลื่อนไปหาเท่านั้น (A หรือ B) ส่วนอีกขาหนึ่งถือว่าลอย (ขาดวงจร)
+                TerminalRef gCom = find(parent, new TerminalRef(p.id, 2));
+                TerminalRef gThrow = find(parent, new TerminalRef(p.id, p.slideToB ? 1 : 0));
+                graph.computeIfAbsent(gCom, k -> new ArrayList<>()).add(new long[]{p.id});
+                graph.computeIfAbsent(gThrow, k -> new ArrayList<>()).add(new long[]{p.id});
+                edgeEndpoints.put(p.id, new TerminalRef[]{gCom, gThrow});
+                continue;
+            }
+
             TerminalRef gA = find(parent, new TerminalRef(p.id, true));
             TerminalRef gB = find(parent, new TerminalRef(p.id, false));
             graph.computeIfAbsent(gA, k -> new ArrayList<>()).add(new long[]{p.id});

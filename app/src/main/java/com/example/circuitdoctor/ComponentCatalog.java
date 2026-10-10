@@ -34,6 +34,16 @@ public class ComponentCatalog {
                 c.getColor(R.color.accent_blue),
                 0, 0, 0, 0));
 
+        list.add(new ComponentType(ComponentType.SLIDESWITCH,
+                c.getString(R.string.component_slideswitch), R.drawable.ic_button, "SSW",
+                c.getColor(R.color.accent_purple),
+                0, 0, 0, 0));
+
+        list.add(new ComponentType(ComponentType.CAPACITOR,
+                c.getString(R.string.component_capacitor), R.drawable.ic_resistor, "C",
+                c.getColor(R.color.accent_blue),
+                0, 0, 0, 0));
+
         return list;
     }
 

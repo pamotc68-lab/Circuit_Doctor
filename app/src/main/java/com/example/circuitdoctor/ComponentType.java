@@ -7,6 +7,8 @@ public class ComponentType {
     public static final int PUSHBUTTON = 3;
     public static final int BATTERY_9V = 4;
     public static final int BREADBOARD = 5;
+    public static final int SLIDESWITCH = 6;
+    public static final int CAPACITOR = 7;
 
     public final int id;
     public final String name;
