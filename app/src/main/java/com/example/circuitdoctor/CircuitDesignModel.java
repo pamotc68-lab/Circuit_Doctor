@@ -7,7 +7,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.Collections;
 
 public class CircuitDesignModel {
 
@@ -22,8 +21,21 @@ public class CircuitDesignModel {
             0xFFFFFFFF  // ขาว
     };
 
+    // ---------- ค่าคงที่ของตัวจำลองวงจร (ปรับได้ตามต้องการ) ----------
     private static final double DEFAULT_RESISTOR_OHMS = 220.0;
     private static final double DEFAULT_BATTERY_VOLTAGE = 9.0;
+    private static final double MIN_RESISTOR_OHMS = 0.001;       // กันค่า 0 โอห์ม
+    private static final double BATTERY_INTERNAL_OHMS = 1.0;     // ความต้านทานภายในแบตเตอรี่ (ทำให้ลัดวงจรได้กระแสสูงแต่คำนวณได้)
+    private static final double LED_FORWARD_VOLTS = 2.0;         // แรงดันตกคร่อม LED ตอนติด
+    private static final double LED_ON_OHMS = 10.0;              // ความต้านทานของ LED ตอนติด
+    private static final double LED_FULL_BRIGHT_AMPS = 0.020;    // กระแสที่ LED สว่างเต็มที่ (20 mA)
+    private static final double LED_MAX_AMPS = 0.050;            // เกินนี้ LED ไหม้ (50 mA)
+    private static final double BATTERY_MAX_AMPS = 0.5;          // แบตเตอรี่จ่ายเกินนี้ถือว่าอันตราย/ลัดวงจร
+    private static final double LED_LIT_MIN_AMPS = 1e-6;         // ต่ำกว่านี้ถือว่า LED ไม่ติด
+    private static final double LEAK_SIEMENS = 1e-12;            // รั่วลงกราวด์เล็กน้อย กันโหนดลอยทำให้สมการแก้ไม่ได้
+    private static final double SHORT_SIEMENS = 1e5;             // ใช้แทน "ลวด" ตอนคำนวณความต้านทานรวม
+    private static final double EPS = 1e-9;
+    private static final int MAX_LED_ITERATIONS = 60;
 
     private final List<PlacedComponent> components = new ArrayList<>();
     private final List<Connection> connections = new ArrayList<>();
@@ -203,14 +215,345 @@ public class CircuitDesignModel {
         nextId = max + 1;
     }
 
+    // =====================================================================
+    //  ตัวคำนวณวงจร (Nodal analysis)
+    // =====================================================================
+
+    /** กิ่งวงจรหนึ่งกิ่ง = อุปกรณ์ 1 ชิ้นที่คร่อมระหว่างโหนดไฟฟ้า a และ b */
+    private static final class Branch {
+        static final int RESISTOR = 0;
+        static final int LED = 1;
+        static final int BATTERY = 2;
+
+        final long componentId;
+        final int kind;
+        final int a;
+        final int b;
+        final double value;   // ตัวต้านทาน = โอห์ม, แบตเตอรี่ = โวลต์
+
+        int ledState = 0;     // LED: 0 = ดับ, 1 = นำกระแส A->B, -1 = นำกระแส B->A (LED ในแอพนี้ไม่แยกขั้ว)
+        boolean active = true;
+        double g = 0;         // ความนำไฟฟ้า (ซีเมนส์)
+        double e = 0;         // แรงเคลื่อนไฟฟ้าอนุกรม: กระแส A->B = g * (Va - Vb - e)
+
+        Branch(long componentId, int kind, int a, int b, double value) {
+            this.componentId = componentId;
+            this.kind = kind;
+            this.a = a;
+            this.b = b;
+            this.value = value;
+        }
+    }
+
     /**
-     * คำนวณวงจรจริงตามกฎของโอห์ม (V = I × R) สำหรับวงจรอนุกรมเส้นเดียว:
-     * รวมค่าตัวต้านทานตลอดเส้นทาง หักแรงดัน Forward Voltage ของ LED แล้วหากระแสที่ไหลจริง
+     * จำลองวงจรด้วยการวิเคราะห์แรงดันทุกโหนด จึงรองรับการต่ออนุกรม ขนาน และหลายกิ่งพร้อมกัน
+     *
+     * - แบตเตอรี่: แหล่งจ่ายแรงดันที่มีความต้านทานภายใน (ขั้ว B ของก้อนแรกเป็นกราวด์)
+     * - ตัวต้านทาน: ตามค่าที่ตั้ง
+     * - LED: นำกระแสเมื่อแรงดันคร่อมเกิน 2.0 V ไม่เช่นนั้นถือว่าขาดวงจร (ยังไม่แยกขั้ว เหมือนของเดิม)
+     * - ปุ่มกดที่กดอยู่ = สายไฟ / ยังไม่กด = ขาดวงจร
+     * - สวิตช์เลื่อน: ขาร่วมต่อกับขาที่เลื่อนไปหาเท่านั้น
+     * - ตัวเก็บประจุ: ขาดวงจรในไฟตรง (DC) จึงไม่นำกระแสในสภาวะคงที่
      */
     public SimulationResult solve() {
-        PlacedComponent battery = firstOfType(ComponentType.BATTERY_9V);
-        if (battery == null) return SimulationResult.noBattery();
+        PlacedComponent firstBattery = firstOfType(ComponentType.BATTERY_9V);
+        if (firstBattery == null) return SimulationResult.noBattery();
 
+        Map<TerminalRef, TerminalRef> parent = buildElectricalGroups();
+
+        // ---- 1) แปลงอุปกรณ์เป็นกิ่งวงจรระหว่างโหนดไฟฟ้า ----
+        Map<TerminalRef, Integer> nodeIndex = new HashMap<>();
+        int startNode = nodeOf(nodeIndex, find(parent, new TerminalRef(firstBattery.id, true)));
+        int groundNode = nodeOf(nodeIndex, find(parent, new TerminalRef(firstBattery.id, false)));
+
+        List<Branch> branches = new ArrayList<>();
+        Branch firstBatteryBranch = null;
+        for (PlacedComponent p : components) {
+            int kind;
+            double value = 0;
+            if (p.typeId == ComponentType.RESISTOR) {
+                kind = Branch.RESISTOR;
+                value = Math.max(MIN_RESISTOR_OHMS, p.customOhms > 0 ? p.customOhms : DEFAULT_RESISTOR_OHMS);
+            } else if (p.typeId == ComponentType.LED) {
+                kind = Branch.LED;
+            } else if (p.typeId == ComponentType.BATTERY_9V) {
+                kind = Branch.BATTERY;
+                value = p.customVoltage > 0 ? p.customVoltage : DEFAULT_BATTERY_VOLTAGE;
+            } else {
+                // ปุ่มกด/สวิตช์เลื่อนถูกรวมโหนดไปแล้ว, ตัวเก็บประจุขาดวงจรในไฟตรง, ชนิดอื่นไม่ใช่ชิ้นส่วนไฟฟ้า
+                continue;
+            }
+
+            int a = nodeOf(nodeIndex, find(parent, new TerminalRef(p.id, true)));
+            int b = nodeOf(nodeIndex, find(parent, new TerminalRef(p.id, false)));
+            Branch br = new Branch(p.id, kind, a, b, value);
+            branches.add(br);
+            if (p.id == firstBattery.id) firstBatteryBranch = br;
+        }
+        int nodeCount = nodeIndex.size();
+
+        List<List<Branch>> adjacency = new ArrayList<>();
+        for (int i = 0; i < nodeCount; i++) adjacency.add(new ArrayList<>());
+        for (Branch br : branches) {
+            adjacency.get(br.a).add(br);
+            adjacency.get(br.b).add(br);
+        }
+
+        // ---- 2) ตรวจว่ามีเส้นทางต่อครบวงจรจากขั้ว + ถึงขั้ว - ของแบตเตอรี่ก้อนแรกหรือไม่ ----
+        boolean[] fromStart = reach(adjacency, startNode, firstBatteryBranch);
+        if (!fromStart[groundNode]) return SimulationResult.noPath();
+
+        // ---- 3) หาแรงดันทุกโหนด โดยวนหาสถานะ ติด/ดับ ของ LED แต่ละดวงจนนิ่ง ----
+        List<Branch> leds = new ArrayList<>();
+        for (Branch br : branches) {
+            if (br.kind == Branch.LED) leds.add(br);
+        }
+
+        double[] volts = null;
+        boolean converged = false;
+        for (int iter = 0; iter < MAX_LED_ITERATIONS && !converged; iter++) {
+            for (Branch br : branches) configure(br, false, firstBattery.id);
+            volts = solveNodal(nodeCount, groundNode, branches, -1, 0);
+            if (volts == null) break;
+
+            converged = true;
+            for (Branch led : leds) {
+                double vab = volts[led.a] - volts[led.b];
+                int next = led.ledState;
+                if (led.ledState == 0) {
+                    if (vab > LED_FORWARD_VOLTS + EPS) next = 1;
+                    else if (vab < -LED_FORWARD_VOLTS - EPS) next = -1;
+                } else if (led.ledState == 1) {
+                    if (vab < LED_FORWARD_VOLTS - EPS) next = 0;
+                } else {
+                    if (vab > -LED_FORWARD_VOLTS + EPS) next = 0;
+                }
+                if (next != led.ledState) {
+                    led.ledState = next;
+                    converged = false;
+                }
+            }
+        }
+        if (volts != null && !converged) {
+            // วนครบรอบแล้วยังไม่นิ่ง: ใช้ผลจากสถานะล่าสุด
+            for (Branch br : branches) configure(br, false, firstBattery.id);
+            volts = solveNodal(nodeCount, groundNode, branches, -1, 0);
+        }
+        if (volts == null) {
+            // สมการแก้ไม่ได้ (แทบไม่เกิดขึ้นเพราะแบตเตอรี่มีความต้านทานภายใน) ถือว่าวงจรอันตราย
+            return SimulationResult.build(false, false, 0, 0, 0, true,
+                    new HashSet<>(), new HashMap<>(), new HashMap<>());
+        }
+
+        // ---- 4) สรุปผล: กระแส ความสว่าง และความอันตราย ----
+        boolean danger = false;
+        boolean hasResistor = false;
+        double batteryAmps = 0;
+        Map<Long, Double> currents = new HashMap<>();
+
+        for (Branch br : branches) {
+            double vab = volts[br.a] - volts[br.b];
+            if (br.kind == Branch.BATTERY) {
+                double delivered = br.g * (br.e - vab); // กระแสที่จ่ายออกจากขั้ว +
+                if (br.componentId == firstBattery.id) batteryAmps = Math.max(0, delivered);
+                if (Math.abs(delivered) > BATTERY_MAX_AMPS) danger = true;
+                currents.put(br.componentId, Math.abs(delivered));
+            } else if (br.kind == Branch.RESISTOR) {
+                double amps = Math.abs(vab) / br.value;
+                if (amps > EPS) hasResistor = true;
+                currents.put(br.componentId, amps);
+            }
+        }
+
+        boolean hasLed = false;
+        double maxBrightness = 0;
+        Set<Long> litIds = new HashSet<>();
+        Map<Long, Double> brightnessById = new HashMap<>();
+
+        for (Branch led : leds) {
+            double vab = volts[led.a] - volts[led.b];
+            double amps = led.ledState == 0 ? 0 : Math.max(0, led.ledState * led.g * (vab - led.ledState * LED_FORWARD_VOLTS));
+            currents.put(led.componentId, amps);
+
+            // LED ที่อยู่ในวงจรจริง = ทั้งสองขาต่อกลับถึงกราวด์ได้โดยไม่ต้องผ่านตัวมันเอง (ไม่ใช่ LED ที่ปลายลอย)
+            boolean[] seen = reach(adjacency, groundNode, led);
+            boolean inCircuit = seen[led.a] && seen[led.b];
+            if (inCircuit) hasLed = true;
+
+            double brightness = 0;
+            if (inCircuit && amps > LED_MAX_AMPS) {
+                danger = true; // LED ไหม้ ไม่ติด
+            } else if (inCircuit && amps >= LED_LIT_MIN_AMPS) {
+                brightness = Math.min(1.0, amps / LED_FULL_BRIGHT_AMPS);
+                litIds.add(led.componentId);
+                maxBrightness = Math.max(maxBrightness, brightness);
+            }
+            brightnessById.put(led.componentId, brightness);
+        }
+
+        // ---- 5) ความต้านทานรวมที่แบตเตอรี่เห็น: ถือ LED ที่ติดเป็นลวด แล้วฉีดกระแสทดสอบ 1 A ----
+        double totalOhms = 0;
+        if (startNode != groundNode) {
+            for (Branch br : branches) configure(br, true, firstBattery.id);
+            double[] rv = solveNodal(nodeCount, groundNode, branches, startNode, 1.0);
+            if (rv != null) {
+                double r = rv[startNode];
+                if (!Double.isNaN(r) && !Double.isInfinite(r) && r >= 0 && r < 1e9) {
+                    totalOhms = Math.round(r * 1000.0) / 1000.0;
+                }
+            }
+        }
+
+        return SimulationResult.build(hasResistor, hasLed, totalOhms, batteryAmps, maxBrightness, danger,
+                litIds, brightnessById, currents);
+    }
+
+    /** ตั้งค่าความนำไฟฟ้า/แรงเคลื่อนของกิ่งตามสถานะปัจจุบัน (resistanceView = โหมดคำนวณความต้านทานรวม) */
+    private void configure(Branch br, boolean resistanceView, long firstBatteryId) {
+        switch (br.kind) {
+            case Branch.RESISTOR:
+                br.active = true;
+                br.g = 1.0 / br.value;
+                br.e = 0;
+                break;
+            case Branch.LED:
+                if (br.ledState == 0) {
+                    br.active = false;
+                } else {
+                    br.active = true;
+                    if (resistanceView) {
+                        br.g = SHORT_SIEMENS;
+                        br.e = 0;
+                    } else {
+                        br.g = 1.0 / LED_ON_OHMS;
+                        br.e = br.ledState * LED_FORWARD_VOLTS;
+                    }
+                }
+                break;
+            case Branch.BATTERY:
+                if (resistanceView) {
+                    if (br.componentId == firstBatteryId) {
+                        br.active = false; // ก้อนที่กำลังวัด ถูกแทนด้วยกระแสทดสอบ
+                    } else {
+                        br.active = true;  // แบตเตอรี่ก้อนอื่น = ลวดเมื่อมองความต้านทาน
+                        br.g = SHORT_SIEMENS;
+                        br.e = 0;
+                    }
+                } else {
+                    br.active = true;
+                    br.g = 1.0 / BATTERY_INTERNAL_OHMS;
+                    br.e = br.value;
+                }
+                break;
+            default:
+                br.active = false;
+        }
+    }
+
+    /**
+     * แก้สมการ G·V = I ของวงจร (KCL ที่ทุกโหนด) ด้วย Gaussian elimination
+     * โหนด ground มีแรงดัน 0 V คืนค่าแรงดันของทุกโหนด หรือ null ถ้าแก้ไม่ได้
+     * injectNode >= 0 คือโหนดที่ฉีดกระแส injectAmps เข้าไป (ใช้คำนวณความต้านทานรวม)
+     */
+    private double[] solveNodal(int nodeCount, int ground, List<Branch> branches, int injectNode, double injectAmps) {
+        int n = nodeCount - 1;
+        double[] result = new double[nodeCount];
+        if (n <= 0) return result;
+
+        double[][] m = new double[n][n + 1];
+        for (int i = 0; i < nodeCount; i++) {
+            int r = rowOf(i, ground);
+            if (r >= 0) m[r][r] += LEAK_SIEMENS;
+        }
+        for (Branch br : branches) {
+            if (!br.active) continue;
+            int ra = rowOf(br.a, ground);
+            int rb = rowOf(br.b, ground);
+            if (ra >= 0) {
+                m[ra][ra] += br.g;
+                m[ra][n] += br.g * br.e;
+            }
+            if (rb >= 0) {
+                m[rb][rb] += br.g;
+                m[rb][n] -= br.g * br.e;
+            }
+            if (ra >= 0 && rb >= 0) {
+                m[ra][rb] -= br.g;
+                m[rb][ra] -= br.g;
+            }
+        }
+        if (injectNode >= 0) {
+            int r = rowOf(injectNode, ground);
+            if (r >= 0) m[r][n] += injectAmps;
+        }
+
+        for (int col = 0; col < n; col++) {
+            int pivot = col;
+            for (int r = col + 1; r < n; r++) {
+                if (Math.abs(m[r][col]) > Math.abs(m[pivot][col])) pivot = r;
+            }
+            if (Math.abs(m[pivot][col]) < 1e-30) return null;
+            double[] tmp = m[col];
+            m[col] = m[pivot];
+            m[pivot] = tmp;
+
+            for (int r = col + 1; r < n; r++) {
+                double f = m[r][col] / m[col][col];
+                if (f == 0) continue;
+                for (int c = col; c <= n; c++) m[r][c] -= f * m[col][c];
+            }
+        }
+
+        double[] x = new double[n];
+        for (int r = n - 1; r >= 0; r--) {
+            double s = m[r][n];
+            for (int c = r + 1; c < n; c++) s -= m[r][c] * x[c];
+            x[r] = s / m[r][r];
+        }
+
+        for (int i = 0; i < nodeCount; i++) {
+            int r = rowOf(i, ground);
+            result[i] = r >= 0 ? x[r] : 0;
+        }
+        return result;
+    }
+
+    private int rowOf(int node, int ground) {
+        if (node == ground) return -1;
+        return node < ground ? node : node - 1;
+    }
+
+    private int nodeOf(Map<TerminalRef, Integer> nodeIndex, TerminalRef group) {
+        Integer idx = nodeIndex.get(group);
+        if (idx == null) {
+            idx = nodeIndex.size();
+            nodeIndex.put(group, idx);
+        }
+        return idx;
+    }
+
+    /** หาโหนดทั้งหมดที่ไปถึงได้จากโหนด from โดยไม่ผ่านกิ่ง skip (ใส่ null ถ้าไม่ต้องข้ามกิ่งไหน) */
+    private boolean[] reach(List<List<Branch>> adjacency, int from, Branch skip) {
+        boolean[] seen = new boolean[adjacency.size()];
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        seen[from] = true;
+        queue.add(from);
+        while (!queue.isEmpty()) {
+            int current = queue.poll();
+            for (Branch br : adjacency.get(current)) {
+                if (br == skip) continue;
+                int other = br.a == current ? br.b : br.a;
+                if (!seen[other]) {
+                    seen[other] = true;
+                    queue.add(other);
+                }
+            }
+        }
+        return seen;
+    }
+
+    /** รวมขาอุปกรณ์ที่ต่อถึงกันโดยตรง (สายไฟ แถบรูบนเบรดบอร์ด สวิตช์ที่ปิดอยู่) ให้เป็นโหนดไฟฟ้าเดียวกัน */
+    private Map<TerminalRef, TerminalRef> buildElectricalGroups() {
         Map<TerminalRef, TerminalRef> parent = new HashMap<>();
         for (PlacedComponent p : components) {
             union(parent, new TerminalRef(p.id, true), new TerminalRef(p.id, true));
@@ -246,109 +589,16 @@ public class CircuitDesignModel {
             if (c.toIsHole) unionByNode(parent, nodeFirstSeen, c.getTo(), c.toRow, c.toCol);
         }
 
-        // กราฟย่อ: โหนด = กลุ่มไฟฟ้า, เส้นเชื่อม = ตัวอุปกรณ์ที่คร่อมสองกลุ่มนั้น
-        Map<TerminalRef, List<long[]>> graph = new HashMap<>();
-        Map<Long, TerminalRef[]> edgeEndpoints = new HashMap<>();
-
+        // สวิตช์ที่ปิดอยู่ = ขาที่เกี่ยวข้องกลายเป็นโหนดเดียวกัน
         for (PlacedComponent p : components) {
-            if (p.typeId == ComponentType.BATTERY_9V) continue;
-            // ปุ่มกดที่ยังไม่ถูกกด ถือว่าวงจรขาด ไม่สร้างเส้นเชื่อมระหว่างสองกลุ่มไฟฟ้า
-            if (p.typeId == ComponentType.PUSHBUTTON && !p.pressed) continue;
-
-            if (p.typeId == ComponentType.SLIDESWITCH) {
-                // สวิตช์เลื่อน 3 ทาง: ขั้วร่วม (ขา C) ต่อวงจรกับขาที่เลื่อนไปหาเท่านั้น (A หรือ B) ส่วนอีกขาหนึ่งถือว่าลอย (ขาดวงจร)
-                TerminalRef gCom = find(parent, new TerminalRef(p.id, 2));
-                TerminalRef gThrow = find(parent, new TerminalRef(p.id, p.slideToB ? 1 : 0));
-                graph.computeIfAbsent(gCom, k -> new ArrayList<>()).add(new long[]{p.id});
-                graph.computeIfAbsent(gThrow, k -> new ArrayList<>()).add(new long[]{p.id});
-                edgeEndpoints.put(p.id, new TerminalRef[]{gCom, gThrow});
-                continue;
-            }
-
-            TerminalRef gA = find(parent, new TerminalRef(p.id, true));
-            TerminalRef gB = find(parent, new TerminalRef(p.id, false));
-            graph.computeIfAbsent(gA, k -> new ArrayList<>()).add(new long[]{p.id});
-            graph.computeIfAbsent(gB, k -> new ArrayList<>()).add(new long[]{p.id});
-            edgeEndpoints.put(p.id, new TerminalRef[]{gA, gB});
-        }
-
-        TerminalRef startGroup = find(parent, new TerminalRef(battery.id, true));
-        TerminalRef endGroup = find(parent, new TerminalRef(battery.id, false));
-
-        // BFS หาเส้นทางจากขั้ว + ถึงขั้ว - ของแบตเตอรี่ ผ่านกลุ่มไฟฟ้า
-        Map<TerminalRef, TerminalRef> cameFromGroup = new HashMap<>();
-        Map<TerminalRef, Long> cameFromComponent = new HashMap<>();
-        ArrayDeque<TerminalRef> queue = new ArrayDeque<>();
-        queue.add(startGroup);
-        cameFromGroup.put(startGroup, startGroup);
-
-        while (!queue.isEmpty()) {
-            TerminalRef current = queue.poll();
-            if (current.equals(endGroup)) break;
-
-            for (long[] edge : graph.getOrDefault(current, new ArrayList<>())) {
-                long componentId = edge[0];
-                TerminalRef[] ends = edgeEndpoints.get(componentId);
-                TerminalRef other = ends[0].equals(current) ? ends[1] : ends[0];
-                if (!cameFromGroup.containsKey(other)) {
-                    cameFromGroup.put(other, current);
-                    cameFromComponent.put(other, componentId);
-                    queue.add(other);
-                }
+            if (p.typeId == ComponentType.PUSHBUTTON && p.pressed) {
+                union(parent, new TerminalRef(p.id, true), new TerminalRef(p.id, false));
+            } else if (p.typeId == ComponentType.SLIDESWITCH) {
+                // สวิตช์เลื่อน 3 ทาง: ขั้วร่วม (ขา C) ต่อกับขาที่เลื่อนไปหาเท่านั้น (A หรือ B) อีกขาหนึ่งลอย (ขาดวงจร)
+                union(parent, new TerminalRef(p.id, 2), new TerminalRef(p.id, p.slideToB ? 1 : 0));
             }
         }
-
-        if (!cameFromGroup.containsKey(endGroup)) {
-            return SimulationResult.noPath();
-        }
-
-        // ย้อนเส้นทางกลับเพื่อรวบรวมอุปกรณ์ที่อยู่บนเส้นทาง
-        List<Long> pathComponentIds = new ArrayList<>();
-        TerminalRef walker = endGroup;
-        while (!walker.equals(startGroup)) {
-            pathComponentIds.add(cameFromComponent.get(walker));
-            walker = cameFromGroup.get(walker);
-        }
-
-        double totalResistance = 0;
-        boolean hasResistor = false;
-        boolean hasLed = false;
-        int ledCount = 0;
-        Set<Long> ledIdsOnPath = new HashSet<>();
-
-        for (long componentId : pathComponentIds) {
-            PlacedComponent p = findComponentById(componentId);
-            if (p == null) continue;
-            if (p.typeId == ComponentType.RESISTOR) {
-                hasResistor = true;
-                totalResistance += (p.customOhms > 0 ? p.customOhms : DEFAULT_RESISTOR_OHMS);
-            } else if (p.typeId == ComponentType.LED) {
-                hasLed = true;
-                ledCount++;
-                ledIdsOnPath.add(componentId);
-            }
-        }
-
-        double sourceVoltage = battery.customVoltage > 0 ? battery.customVoltage : DEFAULT_BATTERY_VOLTAGE;
-        double forwardVoltageTotal = ledCount * 2.0;
-        double effectiveVoltage = sourceVoltage - forwardVoltageTotal;
-
-        if (hasLed && effectiveVoltage <= 0) {
-            return SimulationResult.build(hasResistor, true, totalResistance, 0, 0, false, Collections.emptySet());
-        }
-
-        boolean overCurrentDanger = hasLed && !hasResistor;
-        double current;
-        if (totalResistance > 0) {
-            current = effectiveVoltage / totalResistance;
-        } else {
-            current = hasLed ? 1.5 : 0;
-            if (hasLed) overCurrentDanger = true;
-        }
-
-        double brightness = hasLed ? Math.min(1.0, (current * 1000.0) / 20.0) : 0;
-
-        return SimulationResult.build(hasResistor, hasLed, totalResistance, current, brightness, overCurrentDanger, ledIdsOnPath);
+        return parent;
     }
 
     private PlacedComponent firstOfType(int typeId) {

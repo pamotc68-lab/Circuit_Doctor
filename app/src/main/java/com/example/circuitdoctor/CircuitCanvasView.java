@@ -6,12 +6,13 @@ import android.graphics.Color;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PathMeasure;
 import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+
+import java.util.Locale;
 
 public class CircuitCanvasView extends View {
 
@@ -40,15 +41,38 @@ public class CircuitCanvasView extends View {
 
     private static final float TERMINAL_HIT_RADIUS = BreadboardGrid.CELL * 1.2f;
     private static final float HOLE_HIT_RADIUS = BreadboardGrid.CELL * 0.45f;
-    private static final float WIRE_HIT_RADIUS = BreadboardGrid.CELL * 0.35f;
     private static final float TAP_SLOP = 20f;
     private static final float OUTSIDE_MARGIN_RATIO = 0.28f;
+
+    // ===== ความง่ายในการแตะสายไฟ (ปรับตัวเลขตรงนี้ได้) =====
+    // รัศมีแตะสายไฟ (dp) วัดจากเส้นกลางสาย ~ ขนาดนิ้วมือ (แถบกว้างรวม 2 เท่า) ไม่ขึ้นกับการซูม
+    private static final float WIRE_TOUCH_RADIUS_DP = 14f;
+    // รัศมีแตะสายตอนมีอุปกรณ์ถูกเลือกอยู่ (เล็กลง กันสายแย่งการแตะ "เลือกรูเพื่อย้ายอุปกรณ์")
+    private static final float WIRE_TOUCH_RADIUS_WHILE_SELECTED_DP = 8f;
+    // "รัศมีป้องกัน" (หน่วยโลก): นิ้วแตะใกล้ศูนย์กลางรู/ขาอุปกรณ์ภายในรัศมีนี้ = รู/ขาชนะสายไฟที่พาดผ่าน
+    // นอกรัศมีนี้ แต่ยังอยู่ในแถบแตะสาย = สายชนะ (สายอยู่ชั้นบนสุดเหมือนที่เห็นบนจอ)
+    private static final float TERMINAL_PROTECT_RADIUS = BreadboardGrid.CELL * 0.8f;      // ขาอุปกรณ์
+    private static final float HOLE_PROTECT_RADIUS_WIRE_MODE = BreadboardGrid.CELL * 0.4f; // รู ตอนอยู่ในโหมดต่อสาย
+    private static final float HOLE_PROTECT_RADIUS_MOVING = BreadboardGrid.CELL * 0.3f;    // รู ตอนมีอุปกรณ์ที่เลือกไว้ (แตะรูเพื่อย้าย)
+    // (โหมดปกติที่ไม่ได้เลือกอะไร: แตะรูแค่แสดงคำแนะนำ จึงไม่ป้องกันรู — สายชนะทั้งหมด)
+
+    // นิ้วขยับไม่เกินระยะนี้ (dp) ยังนับเป็น "แตะ" (ขั้นต่ำ TAP_SLOP พิกเซล) ยิ่งมากยิ่งแตะง่าย
+    private static final float TAP_SLOP_DP = 12f;
 
     private static final float MIN_USER_SCALE = 0.6f;
     private static final float MAX_USER_SCALE = 3f;
 
     private static final float BODY_PAD_X = 48f;
     private static final float BODY_PAD_Y = 58f;
+
+    // ขนาดเส้นสายไฟ (พิกเซล) ปรับตัวเลขตรงนี้ได้ถ้าอยากให้เส้นเล็กหรือใหญ่ขึ้น
+    private static final float WIRE_STROKE_WIDTH = 8f;
+    private static final float WIRE_SHADOW_EXTRA = 3f;
+    private static final float WIRE_SELECTED_GLOW_EXTRA = 7f;
+
+    // ขนาดตัวแบตเตอรี่เทียบกับกรอบอุปกรณ์ (1.0 = เต็มกรอบ) ปรับตรงนี้ได้ถ้าอยากให้ใหญ่หรือเล็กลง
+    private static final float BATTERY_WIDTH_RATIO = 0.94f;
+    private static final float BATTERY_HEIGHT_RATIO = 0.84f;
 
     private static final int[] WIRE_COLOR_PALETTE = {
             0xFF2E7D32, // เขียว
@@ -109,6 +133,17 @@ public class CircuitCanvasView extends View {
 
     private int buttonStackIndex;
 
+    // โหมดต่อสายแบบแตะทีละจุด: แตะจุดเริ่มต้น แล้วแตะจุดปลายทาง
+    private static final float WIRE_TAP_SLOP_DP = 20f;
+    private static final long HINT_DURATION_MS = 2600L;
+
+    private boolean wireMode = false;
+    private TerminalRef pendingWireStart = null;
+    private boolean pendingWireModeButtonPress = false;
+    private float wireModeBtnCx, wireModeBtnCy, wireModeBtnR;
+    private String transientHint = null;
+    private long transientHintUntilMs = 0L;
+
     private final Paint workspacePaint = new Paint();
     private final Paint boardPaint = new Paint();
     private final Paint boardBorderPaint = new Paint();
@@ -165,7 +200,6 @@ public class CircuitCanvasView extends View {
 
     private final Paint wireShadowPaint = new Paint();
     private final Paint wirePaint = new Paint();
-    private final Paint wirePreviewPaint = new Paint();
     private final Paint wireSelectedGlowPaint = new Paint();
     private final Paint terminalDotPaint = new Paint();
     private final Paint terminalHighlightPaint = new Paint();
@@ -198,6 +232,24 @@ public class CircuitCanvasView extends View {
 
     private final Paint valueLabelPaint = new Paint();
     private final Paint valueLabelOutlinePaint = new Paint();
+
+    // โหมดจำลองแบบสด: LED ไหม้ ป้ายกระแส และแถบสถานะ
+    private final Paint ledBurnPaint = new Paint();
+    private final Paint simCurrentLabelPaint = new Paint();
+    private final Paint simBurntLabelPaint = new Paint();
+    private final Paint simBannerBgPaint = new Paint();
+    private final Paint simBannerTextPaint = new Paint();
+
+    // โหมดต่อสาย: ปุ่ม จุดเริ่มต้นที่เลือกไว้ และข้อความช่วยบอก
+    private final Paint wireModeButtonPaint = new Paint();
+    private final Paint wireModeButtonActivePaint = new Paint();
+    private final Paint wireModeButtonBorderPaint = new Paint();
+    private final Paint wireModeRingPaint = new Paint();
+    private final Paint wireModeLabelPaint = new Paint();
+    private final Paint wireModeLabelOutlinePaint = new Paint();
+    private final Paint wireStartRingPaint = new Paint();
+    private final Paint wireHintBgPaint = new Paint();
+    private final Paint wireHintTextPaint = new Paint();
 
     public CircuitCanvasView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -416,26 +468,19 @@ public class CircuitCanvasView extends View {
         batteryPolarityPaint.setAntiAlias(true);
 
         wireShadowPaint.setColor(Color.parseColor("#33000000"));
-        wireShadowPaint.setStrokeWidth(14f);
+        wireShadowPaint.setStrokeWidth(WIRE_STROKE_WIDTH + WIRE_SHADOW_EXTRA);
         wireShadowPaint.setStyle(Paint.Style.STROKE);
         wireShadowPaint.setAntiAlias(true);
         wireShadowPaint.setStrokeCap(Paint.Cap.ROUND);
 
-        wirePaint.setStrokeWidth(11f);
+        wirePaint.setStrokeWidth(WIRE_STROKE_WIDTH);
         wirePaint.setStyle(Paint.Style.STROKE);
         wirePaint.setAntiAlias(true);
         wirePaint.setStrokeCap(Paint.Cap.ROUND);
 
-        wirePreviewPaint.setColor(Color.parseColor("#FFA500"));
-        wirePreviewPaint.setStrokeWidth(9f);
-        wirePreviewPaint.setStyle(Paint.Style.STROKE);
-        wirePreviewPaint.setAntiAlias(true);
-        wirePreviewPaint.setStrokeCap(Paint.Cap.ROUND);
-        wirePreviewPaint.setPathEffect(new DashPathEffect(new float[]{16f, 10f}, 0));
-
         wireSelectedGlowPaint.setColor(Color.parseColor("#FFFFFF"));
         wireSelectedGlowPaint.setStyle(Paint.Style.STROKE);
-        wireSelectedGlowPaint.setStrokeWidth(18f);
+        wireSelectedGlowPaint.setStrokeWidth(WIRE_STROKE_WIDTH + WIRE_SELECTED_GLOW_EXTRA);
         wireSelectedGlowPaint.setAntiAlias(true);
         wireSelectedGlowPaint.setStrokeCap(Paint.Cap.ROUND);
         wireSelectedGlowPaint.setPathEffect(new DashPathEffect(new float[]{4f, 6f}, 0));
@@ -577,6 +622,71 @@ public class CircuitCanvasView extends View {
         valueLabelOutlinePaint.setStyle(Paint.Style.STROKE);
         valueLabelOutlinePaint.setStrokeWidth(3f);
         valueLabelOutlinePaint.setAntiAlias(true);
+
+        ledBurnPaint.setColor(Color.parseColor("#D50000"));
+        ledBurnPaint.setStyle(Paint.Style.STROKE);
+        ledBurnPaint.setStrokeCap(Paint.Cap.ROUND);
+        ledBurnPaint.setAntiAlias(true);
+
+        simCurrentLabelPaint.setColor(Color.parseColor("#B3E5FC"));
+        simCurrentLabelPaint.setTextAlign(Paint.Align.CENTER);
+        simCurrentLabelPaint.setFakeBoldText(true);
+        simCurrentLabelPaint.setAntiAlias(true);
+
+        simBurntLabelPaint.setColor(Color.parseColor("#FF8A80"));
+        simBurntLabelPaint.setTextAlign(Paint.Align.CENTER);
+        simBurntLabelPaint.setFakeBoldText(true);
+        simBurntLabelPaint.setAntiAlias(true);
+
+        simBannerBgPaint.setStyle(Paint.Style.FILL);
+        simBannerBgPaint.setAntiAlias(true);
+
+        simBannerTextPaint.setColor(Color.WHITE);
+        simBannerTextPaint.setTextAlign(Paint.Align.LEFT);
+        simBannerTextPaint.setFakeBoldText(true);
+        simBannerTextPaint.setAntiAlias(true);
+
+        wireModeButtonPaint.setColor(Color.parseColor("#546E7A"));
+        wireModeButtonPaint.setStyle(Paint.Style.FILL);
+        wireModeButtonPaint.setAntiAlias(true);
+
+        wireModeButtonActivePaint.setColor(Color.parseColor("#E65100"));
+        wireModeButtonActivePaint.setStyle(Paint.Style.FILL);
+        wireModeButtonActivePaint.setAntiAlias(true);
+
+        wireModeButtonBorderPaint.setColor(Color.WHITE);
+        wireModeButtonBorderPaint.setStyle(Paint.Style.STROKE);
+        wireModeButtonBorderPaint.setStrokeWidth(4f);
+        wireModeButtonBorderPaint.setAntiAlias(true);
+
+        wireModeRingPaint.setColor(Color.parseColor("#FFB300"));
+        wireModeRingPaint.setStyle(Paint.Style.STROKE);
+        wireModeRingPaint.setAntiAlias(true);
+
+        wireModeLabelPaint.setColor(Color.WHITE);
+        wireModeLabelPaint.setTextSize(19f);
+        wireModeLabelPaint.setTextAlign(Paint.Align.CENTER);
+        wireModeLabelPaint.setFakeBoldText(true);
+        wireModeLabelPaint.setAntiAlias(true);
+
+        wireModeLabelOutlinePaint.setColor(Color.parseColor("#80000000"));
+        wireModeLabelOutlinePaint.setTextSize(19f);
+        wireModeLabelOutlinePaint.setTextAlign(Paint.Align.CENTER);
+        wireModeLabelOutlinePaint.setFakeBoldText(true);
+        wireModeLabelOutlinePaint.setStyle(Paint.Style.STROKE);
+        wireModeLabelOutlinePaint.setStrokeWidth(4f);
+        wireModeLabelOutlinePaint.setAntiAlias(true);
+
+        wireStartRingPaint.setStyle(Paint.Style.STROKE);
+        wireStartRingPaint.setAntiAlias(true);
+
+        wireHintBgPaint.setStyle(Paint.Style.FILL);
+        wireHintBgPaint.setAntiAlias(true);
+
+        wireHintTextPaint.setColor(Color.WHITE);
+        wireHintTextPaint.setTextAlign(Paint.Align.LEFT);
+        wireHintTextPaint.setFakeBoldText(true);
+        wireHintTextPaint.setAntiAlias(true);
     }
 
     public void setModel(CircuitDesignModel model) {
@@ -592,6 +702,11 @@ public class CircuitCanvasView extends View {
         this.pendingPlacementTypeId = typeId;
         this.selectedId = null;
         this.selectedWire = null;
+        if (typeId != null) {
+            // เลือกอุปกรณ์จากแผงเพื่อวาง = ออกจากโหมดต่อสายอัตโนมัติ
+            this.wireMode = false;
+            this.pendingWireStart = null;
+        }
         invalidate();
     }
 
@@ -599,6 +714,7 @@ public class CircuitCanvasView extends View {
         selectedId = null;
         selectedWire = null;
         pendingPlacementTypeId = null;
+        pendingWireStart = null;
         downTerminal = null;
         downWire = null;
         draggingComponent = false;
@@ -607,7 +723,54 @@ public class CircuitCanvasView extends View {
     }
 
     public void refresh() {
+        validatePendingWireStart();
+        resimulateIfActive();
         invalidate();
+    }
+
+    /** เปิด/ปิดโหมดต่อสาย (แตะจุดเริ่มต้น แล้วแตะจุดปลายทาง) ใช้ได้ทั้งจากปุ่มในแคนวาสและจากโค้ดภายนอก */
+    public void setWireMode(boolean enabled) {
+        if (wireMode == enabled) {
+            invalidate();
+            return;
+        }
+        wireMode = enabled;
+        pendingWireStart = null;
+        transientHint = null; // ข้อความช่วยเดิมหมดความหมายแล้ว ให้ข้อความของโหมดแสดงแทน
+        if (enabled) {
+            // เข้าโหมดต่อสาย: ยกเลิกการเลือกอุปกรณ์/สาย และการรอวางอุปกรณ์ เพื่อไม่ให้การแตะชนกัน
+            selectedWire = null;
+            if (selectedId != null) {
+                selectedId = null;
+                if (listener != null) listener.onComponentSelected(null);
+            }
+            if (pendingPlacementTypeId != null) {
+                pendingPlacementTypeId = null;
+                if (listener != null) listener.onPlacementTypeConsumed();
+            }
+        }
+        invalidate();
+    }
+
+    public boolean isWireMode() {
+        return wireMode;
+    }
+
+    /** ถ้าจุดเริ่มต้นที่เลือกไว้เป็นขาของอุปกรณ์ที่ถูกลบไปแล้ว (เช่น undo/ลบ) ให้ยกเลิกการเลือก */
+    private void validatePendingWireStart() {
+        if (pendingWireStart == null) return;
+        if (!pendingWireStart.isHole
+                && (model == null || model.findComponentById(pendingWireStart.componentId) == null)) {
+            pendingWireStart = null;
+        }
+    }
+
+    /** แสดงข้อความช่วยบอกชั่วคราวที่มุมซ้ายล่าง */
+    private void showHint(String text) {
+        transientHint = text;
+        transientHintUntilMs = System.currentTimeMillis() + HINT_DURATION_MS;
+        invalidate();
+        postInvalidateDelayed(HINT_DURATION_MS + 60L);
     }
 
     public void showSimulationResult(SimulationResult result) {
@@ -622,9 +785,37 @@ public class CircuitCanvasView extends View {
         invalidate();
     }
 
-    private boolean isLedLitComponent(long componentId) {
-        return simulationActive && simulationResult != null && simulationResult.isLedLit()
-                && simulationResult.litLedComponentIds.contains(componentId);
+    /** ระหว่างเปิดโหมดจำลอง คำนวณวงจรใหม่ทุกครั้งที่วงจรเปลี่ยน (แตะสวิตช์ ลากสาย ย้าย ลบ undo/redo) LED จึงติด/ดับทันที */
+    private void resimulateIfActive() {
+        if (!simulationActive || model == null) return;
+        simulationResult = model.solve();
+    }
+
+    /** แจ้งว่าวงจรเปลี่ยนแล้ว: คำนวณใหม่ (ถ้ากำลังจำลองอยู่) ก่อนบอก Listener */
+    private void notifyCircuitChanged() {
+        resimulateIfActive();
+        if (listener != null) listener.onCircuitChanged();
+    }
+
+    /** ความสว่างของ LED ดวงนี้ตามผลจำลอง: 0 = ดับ, 1 = สว่างเต็มที่ (แยกรายดวง) */
+    private float ledBrightnessOf(long componentId) {
+        if (!simulationActive || simulationResult == null) return 0f;
+        if (!simulationResult.litLedComponentIds.contains(componentId)) return 0f;
+        Double b = simulationResult.ledBrightnessById.get(componentId);
+        if (b == null) return 1f;
+        return (float) Math.max(0.0, Math.min(1.0, b));
+    }
+
+    /** LED ที่มีกระแสไหลแต่ไม่อยู่ในกลุ่มที่ติด = กระแสเกินพิกัด (ไหม้) */
+    private boolean isLedBurnt(long componentId) {
+        if (!simulationActive || simulationResult == null) return false;
+        Double amps = simulationResult.componentCurrentAmps.get(componentId);
+        return amps != null && amps >= 1e-6 && !simulationResult.litLedComponentIds.contains(componentId);
+    }
+
+    private String formatAmps(double amps) {
+        if (amps >= 1.0) return String.format(Locale.US, "%.2f A", amps);
+        return String.format(Locale.US, "%.1f mA", amps * 1000.0);
     }
 
     @Override
@@ -696,13 +887,16 @@ public class CircuitCanvasView extends View {
         drawWires(canvas);
         drawComponents(canvas);
         drawComponentMovePreview(canvas);
-        drawDragPreview(canvas);
+        drawPendingWireStart(canvas);
         drawWireColorButton(canvas);
         buttonStackIndex = 0;
         drawPropertiesButton(canvas);
         drawFlipButton(canvas);
         drawRotateButton(canvas);
         drawDeleteWireButton(canvas);
+        drawSimulationBanner(canvas);
+        drawWireModeButton(canvas);
+        drawWireHint(canvas);
     }
 
     private void drawBoardBackground(Canvas canvas) {
@@ -830,6 +1024,7 @@ public class CircuitCanvasView extends View {
             canvas.restore();
 
             drawValueLabel(canvas, pc, cx, cy, halfLen, vertical);
+            drawSimulationCurrentLabel(canvas, pc, cx, cy, halfLen, vertical);
         }
     }
 
@@ -843,7 +1038,7 @@ public class CircuitCanvasView extends View {
         } else if (typeId == ComponentType.RESISTOR) {
             drawResistorIcon(canvas, body, mirrored, leftHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.LED) {
-            drawLedIcon(canvas, body, isLedLitComponent(pc.id), pc.ledColor, mirrored, leftHoleX, rightHoleX, holeY);
+            drawLedIcon(canvas, body, ledBrightnessOf(pc.id), isLedBurnt(pc.id), pc.ledColor, mirrored, leftHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.PUSHBUTTON) {
             drawButtonIcon(canvas, body, pc.pressed, leftHoleX, rightHoleX, holeY);
         } else if (typeId == ComponentType.CAPACITOR) {
@@ -881,6 +1076,77 @@ public class CircuitCanvasView extends View {
         canvas.drawText(text, cx, y, valueLabelPaint);
     }
 
+    /** ป้ายกระแสใต้อุปกรณ์ (ตัวต้านทาน LED แบตเตอรี่) ขณะเปิดโหมดจำลอง */
+    private void drawSimulationCurrentLabel(Canvas canvas, PlacedComponent pc, float cx, float cy, float halfLen, boolean vertical) {
+        if (!simulationActive || simulationResult == null) return;
+        if (pc.typeId != ComponentType.RESISTOR && pc.typeId != ComponentType.LED
+                && pc.typeId != ComponentType.BATTERY_9V) return;
+
+        Double amps = simulationResult.componentCurrentAmps.get(pc.id);
+        if (amps == null) return;
+
+        String text;
+        Paint paint;
+        if (pc.typeId == ComponentType.LED && isLedBurnt(pc.id)) {
+            text = "ไหม้! " + formatAmps(amps);
+            paint = simBurntLabelPaint;
+        } else if (amps >= 0.0001) {
+            text = formatAmps(amps);
+            paint = simCurrentLabelPaint;
+        } else {
+            return;
+        }
+
+        float size = Math.max(11f, 12f * zoomedScale());
+        paint.setTextSize(size);
+        valueLabelOutlinePaint.setTextSize(size);
+
+        float bottomY = vertical ? cy + (halfLen + BODY_PAD_X * zoomedScale()) : cy + BODY_PAD_Y * zoomedScale();
+        float y = bottomY + size + 2f * zoomedScale();
+        canvas.drawText(text, cx, y, valueLabelOutlinePaint);
+        canvas.drawText(text, cx, y, paint);
+    }
+
+    /** แถบสถานะมุมซ้ายบน แสดงผลจำลองแบบสด (แทนการดู Toast ครั้งเดียว) */
+    private void drawSimulationBanner(Canvas canvas) {
+        if (!simulationActive || simulationResult == null) return;
+        SimulationResult r = simulationResult;
+
+        String text;
+        int bg;
+        if (!r.hasBattery) {
+            text = "ไม่มีแบตเตอรี่ในวงจร";
+            bg = 0xE6B26A00;
+        } else if (!r.pathFound) {
+            text = "วงจรยังไม่ครบ";
+            bg = 0xE6B26A00;
+        } else if (r.overCurrentDanger) {
+            text = "กระแสเกิน / ลัดวงจร!";
+            bg = 0xE6C62828;
+        } else if (r.hasLed && !r.isLedLit()) {
+            text = "LED ไม่ติด (แรงดันไม่พอ)";
+            bg = 0xE6B26A00;
+        } else {
+            text = "วงจรทำงาน  " + formatAmps(r.currentAmps) + "  " + Math.round(r.totalResistanceOhms) + " Ω";
+            bg = 0xE62E7D32;
+        }
+
+        float density = getResources().getDisplayMetrics().density;
+        simBannerTextPaint.setTextSize(14f * density);
+        float padX = 12f * density;
+        float padY = 8f * density;
+        float margin = 12f * density;
+
+        Paint.FontMetrics fm = simBannerTextPaint.getFontMetrics();
+        float textW = simBannerTextPaint.measureText(text);
+        float textH = fm.descent - fm.ascent;
+
+        RectF box = new RectF(margin, margin, margin + textW + padX * 2f, margin + textH + padY * 2f);
+        simBannerBgPaint.setColor(bg);
+        canvas.drawRoundRect(box, 12f * density, 12f * density, simBannerBgPaint);
+        canvas.drawText(text, box.left + padX, box.top + padY - fm.ascent, simBannerTextPaint);
+    }
+
     private void drawResistorIcon(Canvas canvas, RectF body, boolean mirrored, float leftHoleX, float rightHoleX, float holeY) {
         float cx = body.centerX();
         float cy = body.centerY();
@@ -914,7 +1180,7 @@ public class CircuitCanvasView extends View {
         canvas.restore();
     }
 
-    private void drawLedIcon(Canvas canvas, RectF body, boolean lit, int ledColor, boolean mirrored,
+    private void drawLedIcon(Canvas canvas, RectF body, float brightness, boolean burnt, int ledColor, boolean mirrored,
                              float leftHoleX, float rightHoleX, float holeY) {
         float cx = body.centerX();
         float domeTopY = body.centerY() - body.height() * 0.30f;
@@ -938,14 +1204,16 @@ public class CircuitCanvasView extends View {
         canvas.save();
         if (mirrored) canvas.scale(-1f, 1f, cx, body.centerY());
 
-        if (lit) {
+        if (brightness > 0f) {
+            // ยิ่งกระแสมาก LED ยิ่งสว่าง (0.35 = ติดริบหรี่ที่ยังมองเห็น, 1.0 = สว่างเต็มที่)
+            float glow = 0.35f + 0.65f * Math.min(1f, brightness);
             float glowCy = (domeTopY + flatY) / 2f;
             for (int i = 3; i >= 1; i--) {
                 ledGlowPaint.setColor(ledColor);
-                ledGlowPaint.setAlpha(40 / i);
+                ledGlowPaint.setAlpha((int) ((40f / i) * glow));
                 canvas.drawCircle(cx, glowCy, r * (1f + i * 0.55f), ledGlowPaint);
             }
-            ledBodyPaint.setColor(ledColor);
+            ledBodyPaint.setColor(blendColors(darkenColor(ledColor, 0.45f), ledColor, glow));
         } else {
             ledBodyPaint.setColor(darkenColor(ledColor, 0.45f));
         }
@@ -961,7 +1229,25 @@ public class CircuitCanvasView extends View {
         canvas.drawPath(dome, ledBorderPaint);
         canvas.drawCircle(cx - r * 0.35f, domeTopY - r * 0.25f, r * 0.30f, ledHighlightPaint);
 
+        if (burnt) {
+            // LED กระแสเกินพิกัด: ขีดกากบาทแดงทับโดม
+            float crossCy = (domeTopY + flatY) / 2f;
+            float s = r * 0.55f;
+            ledBurnPaint.setStrokeWidth(Math.max(3f, r * 0.22f));
+            canvas.drawLine(cx - s, crossCy - s, cx + s, crossCy + s, ledBurnPaint);
+            canvas.drawLine(cx + s, crossCy - s, cx - s, crossCy + s, ledBurnPaint);
+        }
+
         canvas.restore();
+    }
+
+    private int blendColors(int from, int to, float t) {
+        t = Math.max(0f, Math.min(1f, t));
+        int a = (int) (Color.alpha(from) + (Color.alpha(to) - Color.alpha(from)) * t);
+        int r = (int) (Color.red(from) + (Color.red(to) - Color.red(from)) * t);
+        int g = (int) (Color.green(from) + (Color.green(to) - Color.green(from)) * t);
+        int b = (int) (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * t);
+        return Color.argb(a, r, g, b);
     }
 
     private int darkenColor(int color, float factor) {
@@ -1077,8 +1363,8 @@ public class CircuitCanvasView extends View {
         float cy = body.centerY();
 
         // ตัวแบตทรงแคปซูลแนวนอน แบ่งครึ่งเหลือง (+) และครึ่งกรมท่า (−) ตามภาพอ้างอิง
-        float capsuleW = bw * 0.80f;
-        float capsuleH = bh * 0.62f;
+        float capsuleW = bw * BATTERY_WIDTH_RATIO;
+        float capsuleH = bh * BATTERY_HEIGHT_RATIO;
         RectF capsule = new RectF(cx - capsuleW / 2f, cy - capsuleH / 2f, cx + capsuleW / 2f, cy + capsuleH / 2f);
         float cornerR = capsuleH / 2f;
 
@@ -1176,22 +1462,149 @@ public class CircuitCanvasView extends View {
         }
     }
 
+    /** ความสูงจุดควบคุมโค้งของสาย ใช้ร่วมกันทั้งตอนวาดและตอนตรวจการแตะ ให้เส้นที่เห็นกับพื้นที่แตะตรงกันเสมอ */
+    private float wireControlY(float[] a, float[] b) {
+        return (a[1] + b[1]) / 2f - 26f * zoomedScale();
+    }
+
     private Path buildWirePath(float[] a, float[] b) {
         Path path = new Path();
         path.moveTo(a[0], a[1]);
-        float midY = (a[1] + b[1]) / 2f - 26f * zoomedScale();
+        float midY = wireControlY(a, b);
         path.cubicTo(a[0], midY, b[0], midY, b[0], b[1]);
         return path;
     }
 
-    private void drawDragPreview(Canvas canvas) {
-        if (downTerminal == null || !movedBeyondSlop) return;
-        float[] p = terminalScreenPoint(downTerminal);
-        if (p == null) return;
-        Paint dot = downTerminal.isHole ? holeHighlightPaint : terminalHighlightPaint;
-        canvas.drawCircle(p[0], p[1], 10f * zoomedScale(), dot);
-        wirePreviewPaint.setColor(currentWireColor);
-        canvas.drawLine(p[0], p[1], dragX, dragY, wirePreviewPaint);
+    /** วงแหวนที่จุดเริ่มต้นของสายที่เลือกไว้ (รอแตะจุดปลายทาง) สีวงแหวนตรงกับสีสายที่จะต่อ */
+    private void drawPendingWireStart(Canvas canvas) {
+        if (pendingWireStart == null) return;
+        float[] p = terminalScreenPoint(pendingWireStart);
+        if (p == null) {
+            pendingWireStart = null;
+            return;
+        }
+        float z = zoomedScale();
+        Paint dot = pendingWireStart.isHole ? holeHighlightPaint : terminalHighlightPaint;
+
+        wireStartRingPaint.setColor(currentWireColor);
+        wireStartRingPaint.setStrokeWidth(Math.max(3f, 4f * z));
+        canvas.drawCircle(p[0], p[1], 19f * z, wireStartRingPaint);
+        canvas.drawCircle(p[0], p[1], 13f * z, terminalDotPaint);
+        canvas.drawCircle(p[0], p[1], 9f * z, dot);
+    }
+
+    /** ปุ่มเปิด/ปิดโหมดต่อสาย อยู่มุมขวาล่าง (แยกจากกองปุ่มด้านบนขวา กันปุ่มล้นจอ) */
+    private void drawWireModeButton(Canvas canvas) {
+        float density = getResources().getDisplayMetrics().density;
+        wireModeBtnR = 32f * density;
+        wireModeBtnCx = getWidth() - wireModeBtnR - 18f * density;
+        wireModeBtnCy = getHeight() - wireModeBtnR - 18f * density;
+
+        if (wireMode) {
+            wireModeRingPaint.setStrokeWidth(5f * density);
+            canvas.drawCircle(wireModeBtnCx, wireModeBtnCy, wireModeBtnR + 5f * density, wireModeRingPaint);
+        }
+        canvas.drawCircle(wireModeBtnCx, wireModeBtnCy, wireModeBtnR,
+                wireMode ? wireModeButtonActivePaint : wireModeButtonPaint);
+        canvas.drawCircle(wireModeBtnCx, wireModeBtnCy, wireModeBtnR, wireModeButtonBorderPaint);
+
+        String label = wireMode ? "เสร็จ" : "ต่อสาย";
+        float textY = wireModeBtnCy + 6f * density;
+        canvas.drawText(label, wireModeBtnCx, textY, wireModeLabelOutlinePaint);
+        canvas.drawText(label, wireModeBtnCx, textY, wireModeLabelPaint);
+    }
+
+    private boolean isInsideWireModeButton(float sx, float sy) {
+        return Math.hypot(sx - wireModeBtnCx, sy - wireModeBtnCy) <= wireModeBtnR;
+    }
+
+    /** ข้อความบอกขั้นตอนต่อสาย (หรือข้อความช่วยชั่วคราว) เหนือปุ่มต่อสาย */
+    private void drawWireHint(Canvas canvas) {
+        String text = null;
+        int bg = 0xE6455A64;
+        long now = System.currentTimeMillis();
+        if (transientHint != null && now < transientHintUntilMs) {
+            text = transientHint;
+            bg = 0xE6B26A00;
+        } else if (wireMode) {
+            if (pendingWireStart == null) {
+                text = "โหมดต่อสาย: แตะจุดเริ่มต้นของสาย";
+            } else {
+                text = "แตะจุดปลายทางเพื่อต่อสาย (แตะจุดเดิมอีกครั้งเพื่อยกเลิก)";
+                bg = 0xE6E65100;
+            }
+        }
+        if (text == null) return;
+
+        float density = getResources().getDisplayMetrics().density;
+        float margin = 12f * density;
+        float padX = 12f * density;
+        float padY = 8f * density;
+
+        float textSize = 13f * density;
+        wireHintTextPaint.setTextSize(textSize);
+        float textW = wireHintTextPaint.measureText(text);
+        float maxTextW = getWidth() - margin * 2f - padX * 2f;
+        if (textW > maxTextW && textW > 0f) {
+            textSize = Math.max(9f * density, textSize * maxTextW / textW);
+            wireHintTextPaint.setTextSize(textSize);
+            textW = wireHintTextPaint.measureText(text);
+        }
+
+        Paint.FontMetrics fm = wireHintTextPaint.getFontMetrics();
+        float textH = fm.descent - fm.ascent;
+        float boxBottom = wireModeBtnCy - wireModeBtnR - 12f * density;
+        RectF box = new RectF(margin, boxBottom - textH - padY * 2f, margin + textW + padX * 2f, boxBottom);
+
+        wireHintBgPaint.setColor(bg);
+        canvas.drawRoundRect(box, 12f * density, 12f * density, wireHintBgPaint);
+        canvas.drawText(text, box.left + padX, box.top + padY - fm.ascent, wireHintTextPaint);
+    }
+
+    /** แตะในโหมดต่อสาย: แตะจุดแรก = เลือกจุดเริ่มต้น, แตะจุดที่สอง = ต่อสาย, แตะจุดเดิม/ที่ว่าง = ยกเลิก */
+    private void handleWireModeRelease(float x, float y) {
+        boolean isTap = Math.hypot(x - downX, y - downY) <= WIRE_TAP_SLOP_DP * density();
+        if (!isTap) return; // ลากนิ้ว = ไม่ทำอะไร (ต่อสายด้วยการแตะเท่านั้น)
+
+        TerminalRef tapped = downTerminal;
+        if (tapped == null) {
+            if (downWire != null) {
+                // แตะสายที่มีอยู่ = เลือกสายนั้น (เพื่อลบ)
+                selectedWire = downWire;
+            } else {
+                selectedWire = null;
+            }
+            pendingWireStart = null;
+            return;
+        }
+
+        selectedWire = null;
+        if (pendingWireStart == null) {
+            pendingWireStart = tapped;
+            return;
+        }
+        if (pendingWireStart.equals(tapped)) {
+            pendingWireStart = null; // แตะจุดเดิมซ้ำ = ยกเลิก
+            return;
+        }
+
+        TerminalRef start = pendingWireStart;
+        pendingWireStart = null;
+        createWire(start, tapped);
+    }
+
+    private void createWire(TerminalRef a, TerminalRef b) {
+        for (Connection c : model.getConnections()) {
+            TerminalRef f = c.getFrom();
+            TerminalRef t = c.getTo();
+            if ((f.equals(a) && t.equals(b)) || (f.equals(b) && t.equals(a))) {
+                showHint("มีสายเชื่อมสองจุดนี้อยู่แล้ว");
+                return;
+            }
+        }
+        listener.onBeforeChange();
+        model.addConnection(a, b, currentWireColor);
+        notifyCircuitChanged();
     }
 
     private void drawComponentMovePreview(Canvas canvas) {
@@ -1300,7 +1713,7 @@ public class CircuitCanvasView extends View {
         if (pc.typeId == ComponentType.LED) {
             listener.onBeforeChange();
             model.cycleLedColor(pc.id);
-            listener.onCircuitChanged();
+            notifyCircuitChanged();
             invalidate();
         } else if (pc.typeId == ComponentType.RESISTOR || pc.typeId == ComponentType.BATTERY_9V) {
             listener.onEditPropertiesRequested(pc.id, pc.typeId);
@@ -1349,7 +1762,7 @@ public class CircuitCanvasView extends View {
             pc.colA = pc.colB;
             pc.colB = tmp;
         }
-        listener.onCircuitChanged();
+        notifyCircuitChanged();
         invalidate();
     }
 
@@ -1384,7 +1797,7 @@ public class CircuitCanvasView extends View {
         if (selectedId == null || model == null) return;
         listener.onBeforeChange();
         model.rotateOrientation(selectedId);
-        listener.onCircuitChanged();
+        notifyCircuitChanged();
         invalidate();
     }
 
@@ -1417,7 +1830,7 @@ public class CircuitCanvasView extends View {
         if (selectedWire == null) return;
         listener.onBeforeChange();
         model.getConnections().remove(selectedWire);
-        listener.onCircuitChanged();
+        notifyCircuitChanged();
         selectedWire = null;
         invalidate();
     }
@@ -1577,31 +1990,178 @@ public class CircuitCanvasView extends View {
         return findHoleNear(wx, wy);
     }
 
-    private Connection findWireNear(float sx, float sy) {
-        Connection best = null;
+    /** รูที่ใกล้จุดแตะที่สุดภายในรัศมีที่กำหนด (กว้างกว่าการแตะเลือกอุปกรณ์ เพื่อให้แตะต่อสายง่าย) */
+    private TerminalRef findNearestHole(float wx, float wy, float radius) {
+        TerminalRef best = null;
         double bestDist = Double.MAX_VALUE;
-        float hitRadius = WIRE_HIT_RADIUS * zoomedScale();
+        for (int row : GRID_ROWS) {
+            float hy = BreadboardGrid.yFor(row);
+            if (Math.abs(wy - hy) > radius) continue;
+            for (int col = 0; col < BreadboardGrid.COLS; col++) {
+                float hx = BreadboardGrid.xFor(col);
+                double d = Math.hypot(wx - hx, wy - hy);
+                if (d <= radius && d < bestDist) {
+                    bestDist = d;
+                    best = new TerminalRef(row, col);
+                }
+            }
+        }
+        return best;
+    }
+
+    /**
+     * จุดต่อสายที่ใกล้นิ้วที่สุดในโหมดต่อสาย: ถ้าแตะตรงขาอุปกรณ์จะได้ขาอุปกรณ์ แต่ถ้าแตะรูข้างเคียง
+     * (ซึ่งอยู่ในรัศมีของขาอุปกรณ์) จะได้รูนั้น ไม่ถูกขาอุปกรณ์ดึงไป
+     */
+    private TerminalRef findWirePointNear(float wx, float wy) {
+        TerminalRef term = findComponentTerminalNear(wx, wy);
+        TerminalRef hole = findNearestHole(wx, wy, BreadboardGrid.CELL * 0.75f);
+        if (term == null) return hole;
+        if (hole == null) return term;
+
+        float[] tp = terminalScreenPoint(term);
+        if (tp == null) return hole;
+        double dTerm = Math.hypot(wx - worldX(tp[0]), wy - worldY(tp[1]));
+        double dHole = Math.hypot(wx - BreadboardGrid.xFor(hole.holeCol), wy - BreadboardGrid.yFor(hole.holeRow));
+        return dHole < dTerm - 1.0 ? hole : term;
+    }
+
+    /** ผลการหาสายไฟที่อยู่ใต้นิ้ว */
+    private static final class WireHit {
+        final Connection connection;
+        /** ระยะ (พิกเซล) จากนิ้วถึงเส้นกลางสาย */
+        final double distance;
+        /** จุดบนสายที่ใกล้นิ้วที่สุดคือ "ปลายสาย" (นิ้วอยู่ที่ปลายหรือเลยปลายสายออกไป) */
+        final boolean atEnd;
+
+        WireHit(Connection connection, double distance, boolean atEnd) {
+            this.connection = connection;
+            this.distance = distance;
+            this.atEnd = atEnd;
+        }
+    }
+
+    private float density() {
+        return getResources().getDisplayMetrics().density;
+    }
+
+    private float wireTouchRadiusPx() {
+        float dp = (selectedId != null) ? WIRE_TOUCH_RADIUS_WHILE_SELECTED_DP : WIRE_TOUCH_RADIUS_DP;
+        return dp * density();
+    }
+
+    private float tapSlopPx() {
+        return Math.max(TAP_SLOP, TAP_SLOP_DP * density());
+    }
+
+    /**
+     * ระยะ (พิกเซล) จากจุด (px, py) ถึงเส้นโค้งของสายไฟที่วาดจาก (ax, ay) ไป (bx, by)
+     * โค้ง Bezier ชุดเดียวกับที่ใช้วาด (จุดควบคุม (ax,cy) และ (bx,cy)) ตัดเป็นเส้นตรงสั้น ๆ
+     * แล้ววัดระยะแบบจุดถึงเส้นตรง จึงไม่มีช่องว่างระหว่างจุดตัวอย่างแบบเดิม
+     */
+    static double distanceToWire(float ax, float ay, float bx, float by, float cy, float px, float py) {
+        double ctrlLen = Math.abs(cy - ay) + Math.abs(bx - ax) + Math.abs(by - cy);
+        int n = (int) Math.min(160.0, Math.max(16.0, Math.ceil(ctrlLen / 8.0)));
+
+        double best = Double.MAX_VALUE;
+        double prevX = ax, prevY = ay;
+        for (int i = 1; i <= n; i++) {
+            double t = i / (double) n;
+            double u = 1.0 - t;
+            double w0 = u * u * u;
+            double w1 = 3.0 * u * u * t;
+            double w2 = 3.0 * u * t * t;
+            double w3 = t * t * t;
+            double x = (w0 + w1) * ax + (w2 + w3) * bx;
+            double y = w0 * ay + (w1 + w2) * cy + w3 * by;
+
+            double segX = x - prevX, segY = y - prevY;
+            double len2 = segX * segX + segY * segY;
+            double k = len2 > 0 ? ((px - prevX) * segX + (py - prevY) * segY) / len2 : 0.0;
+            k = Math.max(0.0, Math.min(1.0, k));
+            double d = Math.hypot(px - (prevX + k * segX), py - (prevY + k * segY));
+            if (d < best) best = d;
+
+            prevX = x;
+            prevY = y;
+        }
+        return best;
+    }
+
+    /** สายไฟที่อยู่ใกล้นิ้วที่สุดภายในรัศมีแตะ (ถ้าซ้อนกันพอดี สายที่วาดทีหลัง = อยู่บนสุด ชนะ) */
+    private WireHit findWireNear(float sx, float sy) {
+        float radius = wireTouchRadiusPx();
+        WireHit best = null;
 
         for (Connection c : model.getConnections()) {
             float[] pa = terminalScreenPoint(c.getFrom());
             float[] pb = terminalScreenPoint(c.getTo());
             if (pa == null || pb == null) continue;
 
-            Path path = buildWirePath(pa, pb);
-            PathMeasure pm = new PathMeasure(path, false);
-            float len = pm.getLength();
-            float[] pos = new float[2];
-            int steps = 24;
-            for (int i = 0; i <= steps; i++) {
-                pm.getPosTan(len * i / steps, pos, null);
-                double d = Math.hypot(sx - pos[0], sy - pos[1]);
-                if (d <= hitRadius && d < bestDist) {
-                    bestDist = d;
-                    best = c;
-                }
+            double d = distanceToWire(pa[0], pa[1], pb[0], pb[1], wireControlY(pa, pb), sx, sy);
+            if (d > radius) continue;
+            if (best == null || d <= best.distance) {
+                double dEnd = Math.min(Math.hypot(sx - pa[0], sy - pa[1]), Math.hypot(sx - pb[0], sy - pb[1]));
+                best = new WireHit(c, d, d >= dEnd - 1.5);
             }
         }
         return best;
+    }
+
+    /**
+     * ตัดสินว่านิ้วที่แตะลงตรงนี้ "สายไฟ" หรือ "รู/ขาอุปกรณ์" ชนะ (สายไฟอยู่ชั้นบนสุดเหมือนที่เห็นบนจอ)
+     * - ไม่มีรู/ขาอยู่ใกล้ → สายชนะ
+     * - นิ้วอยู่ที่/เลยปลายสาย → รู/ขาตรงนั้นชนะ (ไม่ให้ปลายสายแย่งการแตะขาอุปกรณ์หรือรูที่สายต่ออยู่)
+     * - นิ้วอยู่ตรงรู/ขาพอดี (ในรัศมีป้องกัน ดูค่าคงที่ด้านบน) → รู/ขาชนะ
+     * - นอกนั้น (แตะข้างๆ รู/ขา แต่ใกล้เส้นสาย) → สายชนะ
+     * (โหมดปกติที่ไม่ได้เลือกอะไร: แตะรูเปล่าแค่แสดงคำแนะนำ จึงให้สายชนะเสมอ ยกเว้นที่ปลายสาย/ขาอุปกรณ์)
+     */
+    private boolean wireBeatsPoint(WireHit hit, TerminalRef point, float sx, float sy) {
+        if (point == null) return true;
+        if (hit.atEnd) return false;
+
+        float[] pp = terminalScreenPoint(point);
+        if (pp == null) return true;
+
+        float protectWorld;
+        if (!point.isHole) {
+            protectWorld = TERMINAL_PROTECT_RADIUS;
+        } else if (wireMode) {
+            protectWorld = HOLE_PROTECT_RADIUS_WIRE_MODE;
+        } else if (selectedId != null) {
+            protectWorld = HOLE_PROTECT_RADIUS_MOVING;
+        } else {
+            return true; // แตะรูเปล่า ๆ ไม่มีหน้าที่อื่นนอกจากแสดงคำแนะนำ ให้สายชนะ
+        }
+        double dPoint = Math.hypot(sx - pp[0], sy - pp[1]);
+        return dPoint > protectWorld * zoomedScale();
+    }
+
+    /** อุปกรณ์ที่เลือกอยู่และนิ้วแตะลงบนตัวมัน (ใช้ลากย้าย) ให้ชนะสายไฟที่พาดผ่าน */
+    private boolean isOnSelectedComponentBody(float sx, float sy) {
+        if (wireMode || selectedId == null) return false;
+        PlacedComponent sel = model.findComponentById(selectedId);
+        return sel != null && componentBodyRectScreen(sel).contains(sx, sy);
+    }
+
+    /** หาว่านิ้วที่แตะลงตรงนี้ตรงกับ "จุดต่อ" หรือ "สายไฟ" แล้วเก็บไว้ใน downTerminal / downWire */
+    private void resolveDownTargets(float sx, float sy) {
+        TerminalRef point = wireMode
+                ? findWirePointNear(worldX(sx), worldY(sy))
+                : findConnectPointNear(worldX(sx), worldY(sy));
+
+        Connection wire = null;
+        // กำลังรอวางอุปกรณ์ หรือเลือกจุดเริ่มต้นสายไว้แล้ว = งานนั้นมาก่อน ไม่ให้สายแย่งการแตะ
+        boolean wiresTappable = pendingPlacementTypeId == null && pendingWireStart == null;
+        if (wiresTappable) {
+            WireHit hit = findWireNear(sx, sy);
+            if (hit != null && wireBeatsPoint(hit, point, sx, sy) && !isOnSelectedComponentBody(sx, sy)) {
+                wire = hit.connection;
+            }
+        }
+
+        downWire = wire;
+        downTerminal = (wire != null) ? null : point;
     }
 
     @Override
@@ -1618,6 +2178,7 @@ public class CircuitCanvasView extends View {
                 draggingComponent = false;
                 movedBeyondSlop = false;
                 pendingWireColorButtonPress = false;
+                pendingWireModeButtonPress = false;
                 pendingPropButtonPress = false;
                 pendingDeleteWireButtonPress = false;
                 pendingFlipButtonPress = false;
@@ -1642,6 +2203,11 @@ public class CircuitCanvasView extends View {
 
             if (isInsideWireColorButton(x, y)) {
                 pendingWireColorButtonPress = true;
+                return true;
+            }
+
+            if (isInsideWireModeButton(x, y)) {
+                pendingWireModeButtonPress = true;
                 return true;
             }
 
@@ -1682,6 +2248,19 @@ public class CircuitCanvasView extends View {
                 invalidate();
             } else if (action == MotionEvent.ACTION_CANCEL) {
                 pendingWireColorButtonPress = false;
+            }
+            return true;
+        }
+
+        if (pendingWireModeButtonPress) {
+            if (action == MotionEvent.ACTION_UP) {
+                if (isInsideWireModeButton(x, y)) {
+                    setWireMode(!wireMode);
+                }
+                pendingWireModeButtonPress = false;
+                invalidate();
+            } else if (action == MotionEvent.ACTION_CANCEL) {
+                pendingWireModeButtonPress = false;
             }
             return true;
         }
@@ -1745,11 +2324,10 @@ public class CircuitCanvasView extends View {
                 dragX = x;
                 dragY = y;
                 movedBeyondSlop = false;
-                downTerminal = findConnectPointNear(worldX(x), worldY(y));
-                downWire = (downTerminal == null) ? findWireNear(x, y) : null;
+                resolveDownTargets(x, y);
 
                 draggingComponent = false;
-                if (downTerminal == null && downWire == null && selectedId != null) {
+                if (!wireMode && downTerminal == null && downWire == null && selectedId != null) {
                     PlacedComponent sel = model.findComponentById(selectedId);
                     if (sel != null && componentBodyRectScreen(sel).contains(x, y)) {
                         draggingComponent = true;
@@ -1762,7 +2340,7 @@ public class CircuitCanvasView extends View {
             case MotionEvent.ACTION_MOVE: {
                 float dx = x - downX;
                 float dy = y - downY;
-                if (Math.hypot(dx, dy) > TAP_SLOP) movedBeyondSlop = true;
+                if (Math.hypot(dx, dy) > tapSlopPx()) movedBeyondSlop = true;
 
                 if (draggingComponent && movedBeyondSlop) {
                     dragX = x;
@@ -1771,16 +2349,14 @@ public class CircuitCanvasView extends View {
                     return true;
                 }
 
-                if (downTerminal != null && movedBeyondSlop) {
-                    dragX = x;
-                    dragY = y;
-                    invalidate();
-                }
                 return true;
             }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
-                handleRelease(x, y);
+                // โหมดต่อสาย: ถ้าระบบยกเลิกการสัมผัสกลางคัน ไม่นับเป็นการแตะ
+                if (!(wireMode && action == MotionEvent.ACTION_CANCEL)) {
+                    handleRelease(x, y);
+                }
                 downTerminal = null;
                 downWire = null;
                 draggingComponent = false;
@@ -1814,6 +2390,11 @@ public class CircuitCanvasView extends View {
     }
 
     private void handleRelease(float x, float y) {
+        if (wireMode) {
+            handleWireModeRelease(x, y);
+            return;
+        }
+
         float wx = worldX(x);
         float wy = worldY(y);
 
@@ -1822,26 +2403,24 @@ public class CircuitCanvasView extends View {
             if (movedBeyondSlop) {
                 listener.onBeforeChange();
                 moveSelectedTo(wx, wy);
-                listener.onCircuitChanged();
+                notifyCircuitChanged();
             }
             return;
         }
 
+        // ลากนิ้วที่เริ่มจากจุดต่อ ไม่ทำอะไรแล้ว (ต่อสายด้วยการแตะ ดูโหมดต่อสาย)
         if (downTerminal != null && movedBeyondSlop) {
-            TerminalRef release = findConnectPointNear(wx, wy);
-            if (release != null && !release.equals(downTerminal)) {
-                listener.onBeforeChange();
-                model.addConnection(downTerminal, release, currentWireColor);
-                listener.onCircuitChanged();
-            }
             return;
         }
 
-        if (downWire != null && !movedBeyondSlop) {
-            selectedWire = downWire;
-            if (selectedId != null) {
-                selectedId = null;
-                listener.onComponentSelected(null);
+        if (downWire != null) {
+            // แตะสาย = เลือกสาย (แล้วกดปุ่ม “ลบสาย” สีแดงเพื่อลบ) ส่วนการลากที่เริ่มจากสายไม่ทำอะไร
+            if (!movedBeyondSlop) {
+                selectedWire = downWire;
+                if (selectedId != null) {
+                    selectedId = null;
+                    listener.onComponentSelected(null);
+                }
             }
             return;
         }
@@ -1858,7 +2437,7 @@ public class CircuitCanvasView extends View {
             placeComponentAt(typeId, wx, wy);
             pendingPlacementTypeId = null;
             listener.onPlacementTypeConsumed();
-            listener.onCircuitChanged();
+            notifyCircuitChanged();
             return;
         }
 
@@ -1869,11 +2448,11 @@ public class CircuitCanvasView extends View {
             if (tapped != null && tapped.typeId == ComponentType.PUSHBUTTON) {
                 listener.onBeforeChange();
                 tapped.pressed = !tapped.pressed;
-                listener.onCircuitChanged();
+                notifyCircuitChanged();
             } else if (tapped != null && tapped.typeId == ComponentType.SLIDESWITCH) {
                 listener.onBeforeChange();
                 tapped.slideToB = !tapped.slideToB;
-                listener.onCircuitChanged();
+                notifyCircuitChanged();
             }
 
             if (selectedId != null && selectedId == downTerminal.componentId) {
@@ -1886,12 +2465,21 @@ public class CircuitCanvasView extends View {
             return;
         }
 
+        // แตะรูบนบอร์ดตอนยังไม่ได้เลือกอะไร: บอกวิธีต่อสาย
+        if (selectedId == null && downTerminal != null && downTerminal.isHole) {
+            if (selectedWire == null) {
+                showHint("กดปุ่ม “ต่อสาย” ที่มุมขวาล่างก่อน แล้วแตะสองจุดเพื่อต่อสาย");
+            }
+            selectedWire = null;
+            return;
+        }
+
         if (selectedId != null) {
             listener.onBeforeChange();
             moveSelectedTo(wx, wy);
             selectedId = null;
             listener.onComponentSelected(null);
-            listener.onCircuitChanged();
+            notifyCircuitChanged();
             return;
         }
 
